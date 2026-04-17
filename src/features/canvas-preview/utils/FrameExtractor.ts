@@ -5,7 +5,7 @@
  * Provides frame-accurate, low-latency frame retrieval with caching.
  */
 
-import { extractFrameAtTime } from "../../../lib/tauri";
+import { extractFrameAtTime, readCachedFrame, saveFrameToCache } from "../../../lib/tauri";
 
 export interface FrameCacheEntry {
   dataUrl: string;
@@ -52,26 +52,43 @@ export class FrameExtractor {
 
   /**
    * Get a frame for a clip at a specific timeline time
-   * Returns cached frame if available, otherwise extracts via FFmpeg
+   * Checks: 1) Memory cache, 2) Persistent disk cache, 3) FFmpeg extraction
    */
   async getFrame(clip: ActiveClip, timelineTime: number): Promise<ImageBitmap | null> {
     const cacheKey = this.getCacheKey(clip, timelineTime);
 
-    // Check cache first
+    // 1. Check memory cache first (fastest)
     const cached = this.cache.get(cacheKey);
     if (cached?.bitmap) {
       cached.lastAccessed = Date.now();
       return cached.bitmap;
     }
 
-    // Check for pending request
+    // 2. Check persistent disk cache (survives app restarts)
+    const filePath = this.assetUrlToFilePath(clip.sourceMediaPath);
+    const width = this.playbackMode ? Math.max(320, Math.floor(this.canvasWidth * this.playbackScaleFactor)) : this.canvasWidth;
+    const height = this.playbackMode ? Math.max(180, Math.floor(this.canvasHeight * this.playbackScaleFactor)) : this.canvasHeight;
+
+    try {
+      const diskCachedDataUrl = await readCachedFrame(filePath, timelineTime, width, height);
+      if (diskCachedDataUrl) {
+        // Found in disk cache - add to memory cache and return
+        this.addToCache(cacheKey, diskCachedDataUrl, timelineTime);
+        return this.createBitmap(diskCachedDataUrl);
+      }
+    } catch (e) {
+      // Disk cache read failed, continue to extraction
+      console.warn("Disk cache read failed:", e);
+    }
+
+    // 3. Check for pending request (deduplicate concurrent requests)
     const pending = this.pendingRequests.get(cacheKey);
     if (pending) {
       const dataUrl = await pending;
       return this.createBitmap(dataUrl);
     }
 
-    // Extract frame via Rust/FFmpeg
+    // 4. Extract frame via FFmpeg
     const extractPromise = this.extractFrame(clip, timelineTime);
     this.pendingRequests.set(cacheKey, extractPromise);
 
@@ -79,8 +96,16 @@ export class FrameExtractor {
       const dataUrl = await extractPromise;
       this.pendingRequests.delete(cacheKey);
 
-      // Cache the result
+      // Cache in memory
       this.addToCache(cacheKey, dataUrl, timelineTime);
+
+      // Also save to persistent disk cache
+      try {
+        await saveFrameToCache(filePath, timelineTime, width, height, dataUrl);
+      } catch (e) {
+        // Disk cache write failure is non-critical
+        console.warn("Failed to save to disk cache:", e);
+      }
 
       return this.createBitmap(dataUrl);
     } catch (error) {
