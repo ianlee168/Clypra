@@ -1,4 +1,5 @@
 use crate::models::Project;
+use tauri::Manager;
 use std::fs;
 use std::path::PathBuf;
 
