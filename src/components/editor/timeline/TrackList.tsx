@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { Volume2, VolumeX, Lock, Unlock, X } from 'lucide-react'
 import { useTimelineStore } from '../../../store/timelineStore'
+import { useUIStore } from '../../../store/uiStore'
 
 interface TrackListProps {
   onEditTrack?: (trackId: string) => void
@@ -8,6 +9,7 @@ interface TrackListProps {
 
 export const TrackList: React.FC<TrackListProps> = ({ onEditTrack }) => {
   const { tracks, removeTrack } = useTimelineStore()
+  const { selectedTrackId, selectTrack } = useUIStore()
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editingName, setEditingName] = useState('')
 
@@ -22,12 +24,19 @@ export const TrackList: React.FC<TrackListProps> = ({ onEditTrack }) => {
   }
 
   return (
-    <div className="w-44 bg-surface border-r border-border overflow-y-auto scrollbar-thin">
+    <div className="w-36 bg-[#181a1f] border-r border-[#2c2f34]">
+      <div className="h-8 px-3 border-b border-[#2c2f34] flex items-center">
+        <span className="text-[11px] font-semibold tracking-wide text-[#88909a] uppercase">Track</span>
+      </div>
+
       {tracks.map((track) => (
         <div
           key={track.id}
-          className="border-b border-border flex items-center gap-2 px-2 py-1"
+          className={`group border-b border-[#2b2f35] flex items-center gap-2 px-2 py-1 transition-colors ${
+            selectedTrackId === track.id ? 'bg-[#20252b]' : 'hover:bg-[#1e2228]'
+          }`}
           style={{ height: `${track.height}px` }}
+          onClick={() => selectTrack(track.id)}
         >
           {editingId === track.id ? (
             <input
@@ -42,31 +51,31 @@ export const TrackList: React.FC<TrackListProps> = ({ onEditTrack }) => {
           ) : (
             <div
               onDoubleClick={() => handleDoubleClick(track.id, track.name)}
-              className="flex-1 text-xs font-medium text-text-primary truncate cursor-text hover:text-accent"
+              className="flex-1 text-[14px] font-medium text-[#d6d9de] truncate cursor-text hover:text-cyan-300"
             >
               {track.name}
             </div>
           )}
 
-          <button className="p-1 hover:bg-surface-raised rounded transition-colors">
+          <button className="p-1 hover:bg-[#2a3038] rounded transition-colors">
             {track.muted ? (
-              <VolumeX className="w-3 h-3 text-text-muted" />
+              <VolumeX className="w-3 h-3 text-[#848c96]" />
             ) : (
-              <Volume2 className="w-3 h-3 text-text-muted" />
+              <Volume2 className="w-3 h-3 text-[#848c96]" />
             )}
           </button>
 
-          <button className="p-1 hover:bg-surface-raised rounded transition-colors">
+          <button className="p-1 hover:bg-[#2a3038] rounded transition-colors">
             {track.locked ? (
-              <Lock className="w-3 h-3 text-text-muted" />
+              <Lock className="w-3 h-3 text-[#848c96]" />
             ) : (
-              <Unlock className="w-3 h-3 text-text-muted" />
+              <Unlock className="w-3 h-3 text-[#848c96]" />
             )}
           </button>
 
           <button
             onClick={() => removeTrack(track.id)}
-            className="p-1 hover:bg-danger/20 rounded transition-colors opacity-0 hover:opacity-100"
+            className="p-1 hover:bg-danger/20 rounded transition-colors opacity-0 group-hover:opacity-100"
           >
             <X className="w-3 h-3 text-danger" />
           </button>

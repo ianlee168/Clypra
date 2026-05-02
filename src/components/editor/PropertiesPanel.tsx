@@ -12,7 +12,7 @@ export const PropertiesPanel: React.FC = () => {
 
   if (!selectedClipId || !selectedClip) {
     return (
-      <div className="w-64 bg-surface border-l border-border flex flex-col p-4 overflow-y-auto scrollbar-thin">
+      <div className="w-64 min-h-0 bg-surface border-l border-border flex flex-col p-4 overflow-y-auto scrollbar-thin shrink-0">
         <div className="flex items-center gap-2 mb-4">
           <Settings className="w-4 h-4" />
           <span className="text-sm font-medium">Properties</span>
@@ -27,7 +27,7 @@ export const PropertiesPanel: React.FC = () => {
   }
 
   return (
-    <div className="w-64 bg-surface border-l border-border flex flex-col overflow-y-auto scrollbar-thin">
+    <div className="w-64 min-h-0 bg-surface border-l border-border flex flex-col overflow-y-auto scrollbar-thin shrink-0">
       <div className="p-4 border-b border-border">
         <h3 className="font-semibold text-text-primary">Clip Properties</h3>
       </div>

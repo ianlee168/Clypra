@@ -14,7 +14,7 @@ interface TrackProps {
 }
 
 export const Track: React.FC<TrackProps> = ({ track, pixelsPerSecond, clips }) => {
-  const { selectTrack, selectedClipId } = useUIStore()
+  const { selectTrack, selectedClipId, selectedTrackId } = useUIStore()
   const { addClipFromAsset, getMediaAsset } = useTimeline()
 
   const [, drop] = useDrop(
@@ -49,7 +49,9 @@ export const Track: React.FC<TrackProps> = ({ track, pixelsPerSecond, clips }) =
     <div
       ref={drop}
       data-track-id={track.id}
-      className="relative border-b border-border bg-surface hover:bg-surface-raised/20 transition-colors"
+      className={`relative border-b border-border transition-colors ${
+        selectedTrackId === track.id ? 'bg-[#1f242b]' : 'bg-[#1b1f25] hover:bg-[#1f242b]'
+      }`}
       style={{ height: `${track.height}px` }}
       onClick={() => selectTrack(track.id)}
     >

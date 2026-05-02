@@ -15,12 +15,9 @@ export const PreviewPanel: React.FC = () => {
   const [dimensions, setDimensions] = useState({ width: 0, height: 0 });
 
   useEffect(() => {
-    console.log("[PreviewPanel] Component mounted, project:", project);
-
     const updateDimensions = () => {
       if (containerRef.current) {
         const { clientWidth, clientHeight } = containerRef.current;
-        console.log("[PreviewPanel] Container dimensions:", { clientWidth, clientHeight });
         setDimensions({
           width: clientWidth,
           height: clientHeight,
@@ -30,7 +27,6 @@ export const PreviewPanel: React.FC = () => {
 
     // Use ResizeObserver for better dimension tracking
     const resizeObserver = new ResizeObserver((entries) => {
-      console.log("[PreviewPanel] ResizeObserver triggered");
       updateDimensions();
     });
 
@@ -46,10 +42,6 @@ export const PreviewPanel: React.FC = () => {
     };
   }, [project]);
 
-  useEffect(() => {
-    console.log("[PreviewPanel] Dimensions updated:", dimensions);
-  }, [dimensions]);
-
   if (!project) {
     console.log("[PreviewPanel] No project, returning null");
     return null;
@@ -60,12 +52,8 @@ export const PreviewPanel: React.FC = () => {
   const canvasWidth = project.canvasWidth;
   const canvasHeight = project.canvasHeight;
 
-  console.log("[PreviewPanel] Canvas dimensions from project:", { canvasWidth, canvasHeight });
-  console.log("[PreviewPanel] Container dimensions state:", dimensions);
-
   // Only calculate if we have valid dimensions, otherwise show a loading state
   if (dimensions.width === 0 || dimensions.height === 0) {
-    console.log("[PreviewPanel] Waiting for container dimensions...");
     return (
       <div className="flex-1 bg-surface flex flex-col">
         <div className="flex-1 flex items-center justify-center p-4">
@@ -83,13 +71,6 @@ export const PreviewPanel: React.FC = () => {
   const scale = Math.min(containerWidth / canvasWidth, containerHeight / canvasHeight);
   const displayWidth = canvasWidth * scale;
   const displayHeight = canvasHeight * scale;
-
-  console.log("[PreviewPanel] Calculated display dimensions:", {
-    scale,
-    displayWidth,
-    displayHeight,
-    aspectRatio: displayWidth / displayHeight,
-  });
 
   const handlePlayheadClick = (e: React.MouseEvent<HTMLDivElement>) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -133,7 +114,7 @@ export const PreviewPanel: React.FC = () => {
         </div>
       </div>
 
-      <div className="border-t border-border p-4 space-y-3">
+      {/* <div className="border-t border-border p-4 space-y-3">
         <div className="flex items-center justify-between">
           <span className="text-sm font-medium text-accent">{project.aspectRatio}</span>
           <div className="text-sm text-text-primary">
@@ -167,7 +148,7 @@ export const PreviewPanel: React.FC = () => {
             className="w-24"
           />
         </div>
-      </div>
+      </div> */}
     </div>
   );
 };

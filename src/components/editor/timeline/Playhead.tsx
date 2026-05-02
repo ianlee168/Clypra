@@ -1,72 +1,68 @@
-import React, { useRef, useEffect } from 'react'
+import React, { useRef, useEffect, useState } from 'react'
 import { usePlaybackStore } from '../../../store/playbackStore'
 
 interface PlayheadProps {
   pixelsPerSecond: number
   duration: number
-  scrollLeft: number
   trackHeight: number
 }
 
-export const Playhead: React.FC<PlayheadProps> = ({ pixelsPerSecond, duration, scrollLeft, trackHeight }) => {
+export const Playhead: React.FC<PlayheadProps> = ({ pixelsPerSecond, duration, trackHeight }) => {
   const { currentTime, seek } = usePlaybackStore()
-  const isDraggingRef = useRef(false)
+  const [isDragging, setIsDragging] = useState(false)
+  const containerRef = useRef<HTMLDivElement | null>(null)
 
-  const left = currentTime * pixelsPerSecond - scrollLeft
+  const left = Math.max(0, currentTime * pixelsPerSecond)
 
   useEffect(() => {
+    if (!isDragging) return
+
     const handleMouseMove = (e: MouseEvent) => {
-      if (!isDraggingRef.current) return
-
-      const playheadElement = document.querySelector('[data-playhead]') as HTMLElement
-      if (!playheadElement) return
-
-      const parent = playheadElement.parentElement
+      const parent = containerRef.current?.parentElement
       if (!parent) return
-
       const rect = parent.getBoundingClientRect()
-      const x = e.clientX - rect.left + scrollLeft
+      const x = e.clientX - rect.left
       const newTime = Math.max(0, Math.min(x / pixelsPerSecond, duration))
       seek(newTime)
     }
 
     const handleMouseUp = () => {
-      isDraggingRef.current = false
+      setIsDragging(false)
     }
 
-    if (isDraggingRef.current) {
-      window.addEventListener('mousemove', handleMouseMove)
-      window.addEventListener('mouseup', handleMouseUp)
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
 
-      return () => {
-        window.removeEventListener('mousemove', handleMouseMove)
-        window.removeEventListener('mouseup', handleMouseUp)
-      }
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [duration, pixelsPerSecond, scrollLeft, seek])
+  }, [isDragging, duration, pixelsPerSecond, seek])
 
   return (
     <div
+      ref={containerRef}
       data-playhead
-      className="absolute z-40 pointer-events-none"
+      className="absolute z-[80] pointer-events-none"
       style={{
         left: `${left}px`,
         top: 0,
         height: trackHeight,
         width: '2px',
-        backgroundColor: '#ef4444',
+        backgroundColor: '#f1f4f8',
+        boxShadow: '0 0 0 1px rgba(0,0,0,0.25)',
       }}
     >
       <div
-        className="absolute w-4 h-3 bg-danger rounded-sm pointer-events-auto cursor-grab active:cursor-grabbing"
+        className="absolute w-4 h-3 rounded-[2px] pointer-events-auto cursor-grab active:cursor-grabbing"
         style={{
-          left: '-8px',
-          top: '-4px',
+          left: '-7px',
+          top: '-5px',
+          backgroundColor: '#f1f4f8',
           clipPath: 'polygon(0 100%, 50% 0, 100% 100%)',
+          boxShadow: '0 0 0 1px rgba(0,0,0,0.35)',
         }}
-        onMouseDown={() => {
-          isDraggingRef.current = true
-        }}
+        onMouseDown={() => setIsDragging(true)}
       />
     </div>
   )

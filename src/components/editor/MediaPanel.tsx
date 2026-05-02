@@ -33,7 +33,7 @@ export const MediaPanel: React.FC<MediaPanelProps> = ({ onAddToTimeline }) => {
   };
 
   return (
-    <div className="w-64 bg-surface border-r border-border flex flex-col overflow-hidden">
+    <div className="w-64 min-h-0 bg-surface border-r border-border flex flex-col overflow-hidden shrink-0">
       <div className="p-4 border-b border-border">
         <Button variant="secondary" size="sm" className="w-full border-dashed" onClick={importMedia} disabled={isLoading}>
           <CloudUpload className="w-4 h-4" />
