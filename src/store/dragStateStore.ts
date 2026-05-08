@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { Clip } from "../types";
+import { useTimelineStore } from "./timelineStore";
 
 interface DragStateStore {
   // The clip being dragged (removed from timeline)
@@ -75,7 +76,6 @@ export const useDragStateStore = create<DragStateStore>((set) => ({
   commitDrop: (clipId, trackId, startTime) => {
     console.log("[STORE] 💾 commitDrop", { clipId, trackId, startTime });
     // Import timelineStore dynamically to avoid circular dependency
-    const { useTimelineStore } = require("./timelineStore");
     const { updateClip } = useTimelineStore.getState();
 
     // Update clip position

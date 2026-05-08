@@ -1,5 +1,7 @@
 import { create } from "zustand";
 import type { Track, Clip } from "../types";
+import { useUIStore } from "./uiStore";
+import { useProjectStore } from "./projectStore";
 
 interface TimelineStore {
   tracks: Track[];
@@ -227,7 +229,6 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   },
 
   swapClips: () => {
-    const { useUIStore } = require("./uiStore");
     const { selectedClipIds } = useUIStore.getState();
 
     // Guard: exactly 2 clips must be selected
@@ -316,7 +317,6 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
     try {
       // Lazy import to avoid circular deps during store init.
       // eslint-disable-next-line @typescript-eslint/no-var-requires
-      const { useProjectStore } = require("./projectStore");
       const asset = useProjectStore.getState().mediaAssets?.find((a: any) => a.id === clip.mediaId);
       if (asset?.duration && Number.isFinite(asset.duration) && asset.duration > 0) {
         mediaDurationBound = asset.duration;

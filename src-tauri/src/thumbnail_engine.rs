@@ -943,219 +943,30 @@ impl ExtractionQueue {
             .map_err(|_| "Failed to submit batch extraction request".to_string())
     }
 
-    /// Extract a single frame using FFmpeg
+    /// Extract a single frame (DEPRECATED - use decode_frames_streaming instead)
     async fn extract_single_frame(
-        video_path: &str,
-        time: f64,
-        width: u32,
-        height: u32,
-        video_id: &str,
-        density: DensityLevel,
-        resolution_tier: ResolutionTier,
+        _video_path: &str,
+        _time: f64,
+        _width: u32,
+        _height: u32,
+        _video_id: &str,
+        _density: DensityLevel,
+        _resolution_tier: ResolutionTier,
     ) -> Result<PathBuf, String> {
-        // Get cache path
-        let cache_path = GLOBAL_CACHE
-            .frame_path(video_id, density, time, resolution_tier)
-            .await
-            .ok_or("Cache not initialized")?;
-
-        // Check if already cached
-        if cache_path.exists() {
-            // Update cache entry (file already counted in total_size)
-            if let Some(video_cache) = GLOBAL_CACHE.get_video(video_path) {
-                if let Some(level_cache) = video_cache.levels.get(&density) {
-                    level_cache.insert(time, CachedFrame::new(time, cache_path.clone()));
-                }
-            }
-            // Enforce memory limits after adding frame to in-memory cache
-            GLOBAL_CACHE.evict_if_needed().await;
-            return Ok(cache_path);
-        }
-
-        // Ensure parent directory exists
-        if let Some(parent) = cache_path.parent() {
-            tokio::fs::create_dir_all(parent)
-                .await
-                .map_err(|e| format!("Failed to create cache directory: {}", e))?;
-        }
-
-        let time_str = format!("{:.3}", time);
-        let scale_str = format!("{}:{}", width, height);
-
-        // Hybrid seeking: fast seek to keyframe before target, then precise decode
-        let fast_seek_time = (time - 2.0).max(0.0);
-        let fast_seek_str = format!("{:.3}", fast_seek_time);
-        let precise_seek = if fast_seek_time > 0.0 { "2.0" } else { &time_str };
-
-        // Build FFmpeg filter: scale up to fill, then crop (no black bars)
-        let vf_filter = format!(
-            "scale={}:force_original_aspect_ratio=increase,crop={}:{}",
-            scale_str, width, height
-        );
-
-        let args = vec![
-            "-hide_banner".to_string(),
-            "-loglevel".to_string(),
-            "error".to_string(),
-            "-ss".to_string(),
-            fast_seek_str.clone(),
-            "-i".to_string(),
-            video_path.to_string(),
-            "-ss".to_string(),
-            precise_seek.to_string(),
-            "-vframes".to_string(),
-            "1".to_string(),
-            "-vf".to_string(),
-            vf_filter.clone(),
-            "-c:v".to_string(),
-            "libwebp".to_string(),
-            "-quality".to_string(),
-            "80".to_string(),
-            "-f".to_string(),
-            "image2".to_string(),
-            cache_path
-                .to_str()
-                .ok_or("Invalid cache path")?
-                .to_string(),
-        ];
-        let output = crate::ffmpeg_sidecar::ffmpeg_output_strings(&args)
-            .await
-            .map_err(|e| format!("FFmpeg failed: {}", e))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(format!("FFmpeg error: {}", stderr));
-        }
-
-        // Update cache entry
-        if let Some(video_cache) = GLOBAL_CACHE.get_video(video_path) {
-            if let Some(level_cache) = video_cache.levels.get(&density) {
-                level_cache.insert(time, CachedFrame::new(time, cache_path.clone()));
-                // Increment global total_size by the newly written file size
-                if let Ok(metadata) = std::fs::metadata(&cache_path) {
-                    GLOBAL_CACHE.total_size.fetch_add(metadata.len(), Ordering::Relaxed);
-                }
-            }
-        }
-
-        // Check if we need to evict frames to stay under 200MB limit
-        GLOBAL_CACHE.evict_if_needed().await;
-
-        Ok(cache_path)
+        Err("extract_single_frame is deprecated - use decode_frames_streaming instead".to_string())
     }
 
-    /// Extract multiple frames in batch (more efficient)
+    /// Extract multiple frames in batch (DEPRECATED - use decode_frames_streaming instead)
     async fn extract_batch(
-        video_path: &str,
-        times: &[f64],
-        width: u32,
-        height: u32,
-        video_id: &str,
-        density: DensityLevel,
-        resolution_tier: ResolutionTier,
+        _video_path: &str,
+        _times: &[f64],
+        _width: u32,
+        _height: u32,
+        _video_id: &str,
+        _density: DensityLevel,
+        _resolution_tier: ResolutionTier,
     ) -> Vec<Result<PathBuf, String>> {
-        let mut results = Vec::with_capacity(times.len());
-
-        // For batch extraction, we process in chunks of 4 frames
-        for chunk in times.chunks(4) {
-            let mut chunk_results = Vec::new();
-
-            for &time in chunk {
-                // Get cache path
-                let cache_path = match GLOBAL_CACHE.frame_path(video_id, density, time, resolution_tier).await {
-                    Some(path) => path,
-                    None => {
-                        chunk_results.push(Err("Cache not initialized".to_string()));
-                        continue;
-                    }
-                };
-
-                // Check if already cached
-                if cache_path.exists() {
-                    // Update cache (file already counted in total_size)
-                    if let Some(video_cache) = GLOBAL_CACHE.get_video(video_path) {
-                        if let Some(level_cache) = video_cache.levels.get(&density) {
-                            level_cache.insert(time, CachedFrame::new(time, cache_path.clone()));
-                        }
-                    }
-                    // Enforce memory limits after adding frame to in-memory cache
-                    GLOBAL_CACHE.evict_if_needed().await;
-                    chunk_results.push(Ok(cache_path));
-                    continue;
-                }
-
-                // Ensure parent directory exists
-                if let Some(parent) = cache_path.parent() {
-                    let _ = tokio::fs::create_dir_all(parent).await;
-                }
-
-                let time_str = format!("{:.3}", time);
-                let scale_str = format!("{}:{}", width, height);
-
-                // Hybrid seeking
-                let fast_seek_time = (time - 2.0).max(0.0);
-                let fast_seek_str = format!("{:.3}", fast_seek_time);
-                let precise_seek = if fast_seek_time > 0.0 { "2.0" } else { &time_str };
-
-                let vf_filter = format!(
-                    "scale={}:force_original_aspect_ratio=increase,crop={}:{}",
-                    scale_str, width, height
-                );
-
-                let args = vec![
-                    "-hide_banner".to_string(),
-                    "-loglevel".to_string(),
-                    "error".to_string(),
-                    "-ss".to_string(),
-                    fast_seek_str.clone(),
-                    "-i".to_string(),
-                    video_path.to_string(),
-                    "-ss".to_string(),
-                    precise_seek.to_string(),
-                    "-vframes".to_string(),
-                    "1".to_string(),
-                    "-vf".to_string(),
-                    vf_filter.clone(),
-                    "-c:v".to_string(),
-                    "libwebp".to_string(),
-                    "-quality".to_string(),
-                    "80".to_string(),
-                    "-f".to_string(),
-                    "image2".to_string(),
-                    cache_path.to_str().unwrap_or("").to_string(),
-                ];
-                let result = crate::ffmpeg_sidecar::ffmpeg_output_strings(&args).await;
-
-                match result {
-                    Ok(output) if output.status.success() => {
-                        // Update cache and increment global total_size
-                        if let Some(video_cache) = GLOBAL_CACHE.get_video(video_path) {
-                            if let Some(level_cache) = video_cache.levels.get(&density) {
-                                level_cache.insert(time, CachedFrame::new(time, cache_path.clone()));
-                                // Increment global total_size by the newly written file size
-                                if let Ok(metadata) = std::fs::metadata(&cache_path) {
-                                    GLOBAL_CACHE.total_size.fetch_add(metadata.len(), Ordering::Relaxed);
-                                }
-                            }
-                        }
-                        // Check if we need to evict frames to stay under 200MB limit
-                        GLOBAL_CACHE.evict_if_needed().await;
-                        chunk_results.push(Ok(cache_path));
-                    }
-                    Ok(output) => {
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        chunk_results.push(Err(format!("FFmpeg error: {}", stderr)));
-                    }
-                    Err(e) => {
-                        chunk_results.push(Err(format!("FFmpeg failed: {}", e)));
-                    }
-                }
-            }
-
-            results.extend(chunk_results);
-        }
-
-        results
+        vec![Err("extract_batch is deprecated - use decode_frames_streaming instead".to_string()); _times.len()]
     }
 }
 

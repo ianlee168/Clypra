@@ -143,6 +143,15 @@ impl VideoDecoder {
         self.rotation
     }
 
+    /// Get the frame rate (fps) from the time base
+    pub fn fps(&self) -> f64 {
+        if self.time_base.denominator() > 0 {
+            self.time_base.denominator() as f64 / self.time_base.numerator() as f64
+        } else {
+            30.0 // Default fallback
+        }
+    }
+
     /// Try hardware acceleration, fall back to software silently
     fn open_with_hw(
         mut ctx: ffmpeg::codec::context::Context,
