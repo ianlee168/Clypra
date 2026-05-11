@@ -6,14 +6,14 @@ import { EditorLayout } from "../editor/EditorLayout";
 import { SettingsModal } from "../ui/SettingsModal";
 import { SuccessToast } from "../ui/SuccessToast";
 import { useKeyboardShortcuts } from "../../hooks/useKeyboardShortcuts";
-import { usePlaybackStore } from "../../store/playbackStore";
+import { usePlaybackControls } from "../../hooks/usePlaybackClock";
 import { useProjectStore } from "../../store/projectStore";
 import { useUIStore } from "../../store/uiStore";
 import { useRenderEngineStore } from "../../store/renderEngineStore";
 
 export const EditorScreen: React.FC = () => {
   const { toastMessage } = useKeyboardShortcuts();
-  const { setDuration } = usePlaybackStore();
+  const { setDuration } = usePlaybackControls();
   const { project } = useProjectStore();
   const { showSettingsModal, toggleSettingsModal } = useUIStore();
   const { initRuntime, destroyRuntime } = useRenderEngineStore();

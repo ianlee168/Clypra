@@ -15,10 +15,17 @@ interface TimelineStore {
    * The compositor resolves frames by time, not by track constraints.
    */
   mainVideoTrackId: string | null;
+  /**
+   * Timeline epoch - increments on every timeline mutation.
+   * Used for cache invalidation in render engine and evaluation.
+   */
+  epoch: number;
   zoomLevel: number;
   scrollLeft: number;
   pixelsPerSecond: number;
   rippleEditEnabled: boolean;
+  /** Increment epoch (for cache invalidation) */
+  incrementEpoch: () => void;
   addTrack: (type: "video" | "audio" | "text") => void;
   /** Inserts a track at index (clamped); returns the new track id. */
   insertTrackAt: (type: "video" | "audio" | "text", index: number) => string;
@@ -34,6 +41,12 @@ interface TimelineStore {
   /** Clamps to the SRP zoom range and syncs `zoomLevel` to `pixelsPerSecond / 100`. */
   setPixelsPerSecond: (pps: number) => void;
   setScrollLeft: (left: number) => void;
+  /**
+   * @deprecated Use EditingActions.executeSplit() instead.
+   * This method bypasses the command system and should not be called from UI.
+   * Kept for internal use only.
+   * @internal
+   */
   splitClipAtTime: (clipId: string, time: number) => void;
   getTimelineEndTime: () => number;
   swapClips: () => { error: string | null };
@@ -68,10 +81,15 @@ export const useTimelineStore = create<TimelineStore>((set, get) => ({
   tracks: [],
   clips: [],
   mainVideoTrackId: null,
+  epoch: 0,
   zoomLevel: TIMELINE_ZOOM_DEFAULT,
   scrollLeft: 0,
   pixelsPerSecond: TIMELINE_ZOOM_DEFAULT * TIMELINE_PPS_PER_ZOOM,
   rippleEditEnabled: false,
+
+  incrementEpoch: () => {
+    set((state) => ({ epoch: state.epoch + 1 }));
+  },
 
   addTrack: (type) => {
     const newTrack: Track = {

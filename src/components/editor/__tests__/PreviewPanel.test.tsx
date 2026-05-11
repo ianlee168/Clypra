@@ -14,8 +14,8 @@ class MockResizeObserver {
   constructor(cb: ResizeObserverCallback) {
     this.cb = cb;
   }
-  observe() { }
-  disconnect() { }
+  observe() {}
+  disconnect() {}
   trigger() {
     this.cb([], this as unknown as ResizeObserver);
   }
@@ -32,6 +32,26 @@ describe("PreviewPanel timeline rendering", () => {
   beforeEach(() => {
     Object.defineProperty(HTMLElement.prototype, "clientWidth", { configurable: true, value: 1200 });
     Object.defineProperty(HTMLElement.prototype, "clientHeight", { configurable: true, value: 800 });
+
+    // Mock canvas for tests
+    HTMLCanvasElement.prototype.getContext = vi.fn(() => ({
+      fillStyle: "",
+      fillRect: vi.fn(),
+      drawImage: vi.fn(),
+      save: vi.fn(),
+      restore: vi.fn(),
+      translate: vi.fn(),
+      rotate: vi.fn(),
+      scale: vi.fn(),
+      fillText: vi.fn(),
+      strokeText: vi.fn(),
+      measureText: vi.fn(() => ({ width: 100 })),
+      font: "",
+      textAlign: "left",
+      textBaseline: "alphabetic",
+      globalAlpha: 1,
+      globalCompositeOperation: "source-over",
+    })) as any;
 
     useProjectStore.setState({
       project: {
@@ -72,15 +92,17 @@ describe("PreviewPanel timeline rendering", () => {
     });
   });
 
-  it("renders timeline layers instead of selected media", () => {
+  it("renders timeline layers using canvas", () => {
     render(<PreviewPanel />);
-    expect(screen.getAllByTestId("preview-layer").length).toBe(2);
+    // Canvas-based rendering - check for canvas element instead of DOM layers
+    expect(screen.getByTestId("program-preview-canvas")).toBeInTheDocument();
   });
 
-  it("shows fallback text when no active timeline layers at current time", () => {
+  it("shows canvas when no active timeline layers at current time", () => {
     usePlaybackStore.setState({ currentTime: 15 });
     render(<PreviewPanel />);
-    expect(screen.getByText("Preview")).toBeInTheDocument();
+    // Canvas is still rendered, just empty
+    expect(screen.getByTestId("program-preview-canvas")).toBeInTheDocument();
   });
 
   it("uses active media intrinsic ratio for Original when exactly one visual layer is active", () => {

@@ -1,15 +1,22 @@
 import React, { useEffect } from "react";
-import { usePlaybackStore } from "../store/playbackStore";
+import { usePlaybackClock, usePlaybackControls } from "./usePlaybackClock";
 import { useTimelineStore } from "../store/timelineStore";
 import { useUIStore } from "../store/uiStore";
 import { useProjectStore } from "../store/projectStore";
+import { useHistoryStore } from "../store/historyStore";
+import { EditingActions } from "../core/interactions";
 
 export const useKeyboardShortcuts = () => {
-  const { isPlaying, currentTime, frameRate, play, pause, seek } = usePlaybackStore();
+  const clockState = usePlaybackClock();
+  const { play, pause, seek } = usePlaybackControls();
   const { zoomLevel, setZoom, swapClips, rippleEditEnabled, toggleRippleEdit } = useTimelineStore();
   const { selectedClipIds, selectClip, selectTrack, previewMode, exitSourceMode, markSourceIn, markSourceOut } = useUIStore();
-  const { project } = useProjectStore();
+  const { undo, redo } = useHistoryStore();
   const [toastMessage, setToastMessage] = React.useState<string | null>(null);
+
+  const isPlaying = clockState.state === "playing";
+  const currentTime = clockState.time;
+  const frameRate = clockState.frameRate;
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -58,13 +65,20 @@ export const useKeyboardShortcuts = () => {
         seek(currentTime + frameTime);
       } else if (isMeta && e.key === "z" && !e.shiftKey) {
         e.preventDefault();
-        console.log("Undo");
+        undo();
       } else if ((isMeta && e.shiftKey && e.key === "z") || (isMeta && e.key === "y")) {
         e.preventDefault();
-        console.log("Redo");
+        redo();
       } else if (isMeta && e.key === "s") {
         e.preventDefault();
-        console.log("Save project");
+        // Manual save
+        const { project, mediaAssets, scheduleAutoSave } = useProjectStore.getState();
+        if (project) {
+          // Clear auto-save timer and save immediately
+          scheduleAutoSave();
+          setToastMessage("Project saved");
+          setTimeout(() => setToastMessage(null), 2000);
+        }
       } else if (isMeta && e.key === "i") {
         e.preventDefault();
         console.log("Import media");
@@ -92,12 +106,30 @@ export const useKeyboardShortcuts = () => {
         toggleRippleEdit();
         setToastMessage(rippleEditEnabled ? "Ripple Edit: OFF" : "Ripple Edit: ON");
         setTimeout(() => setToastMessage(null), 2000);
+      } else if (e.key === "s" && !isMeta) {
+        // S key - split clip(s) at playhead
+        e.preventDefault();
+        const results = EditingActions.splitAtPlayhead();
+
+        if (results.length === 0) {
+          setToastMessage("No clips under playhead to split");
+        } else {
+          const successCount = results.filter((r) => r.success).length;
+          const failCount = results.length - successCount;
+
+          if (successCount > 0) {
+            setToastMessage(`Split ${successCount} clip${successCount > 1 ? "s" : ""}`);
+          } else if (failCount > 0) {
+            setToastMessage(results[0].error || "Split failed");
+          }
+        }
+        setTimeout(() => setToastMessage(null), 2000);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [isPlaying, currentTime, frameRate, zoomLevel, selectedClipIds, previewMode, rippleEditEnabled, play, pause, seek, setZoom, selectClip, selectTrack, exitSourceMode, markSourceIn, markSourceOut, swapClips, toggleRippleEdit]);
+  }, [isPlaying, currentTime, frameRate, zoomLevel, selectedClipIds, previewMode, rippleEditEnabled, play, pause, seek, setZoom, selectClip, selectTrack, exitSourceMode, markSourceIn, markSourceOut, swapClips, toggleRippleEdit, undo, redo]);
 
   return { toastMessage };
 };

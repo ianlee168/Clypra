@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import type { MediaAsset } from "../types";
-import { usePlaybackStore } from "./playbackStore";
+import { getPlaybackClock } from "../core/playback";
 
 interface UIStore {
   selectedClipIds: string[]; // Multi-select support
@@ -99,12 +99,13 @@ export const useUIStore = create<UIStore>((set, get) => ({
 
   // Preview mode actions
   previewAsset: (asset) => {
-    // Get playback store state
-    const { isPlaying, pause } = usePlaybackStore.getState();
+    // Get playback clock state
+    const clock = getPlaybackClock();
+    const isPlaying = clock.state === "playing";
 
     // Pause timeline if playing before switching to source mode
     if (isPlaying) {
-      pause();
+      clock.pause();
     }
 
     set({

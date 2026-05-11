@@ -1,22 +1,37 @@
 import React, { useRef, useState } from "react";
-import { Plus, MousePointer2, Scissors, Magnet, Link2, Mic, Search, ZoomIn, ZoomOut, ArrowLeftRight, Waves } from "lucide-react";
+import { Plus, MousePointer2, Scissors, Magnet, Link2, Mic, Search, ZoomIn, ZoomOut, ArrowLeftRight, Waves, Undo2, Redo2 } from "lucide-react";
 import { Button } from "../../ui/Button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../ui/Tooltip";
 import { useTimelineStore } from "../../../store/timelineStore";
 import { useUIStore } from "../../../store/uiStore";
 import { useSettingsStore } from "../../../store/settingsStore";
+import { useHistoryStore } from "../../../store/historyStore";
 import { SuccessToast } from "../../ui/SuccessToast";
 import { DEFAULT_SRP_CONFIG, SpatialTier } from "../../../lib/renderEngine/types";
 import { clampTimelineZoom, formatCadenceSeconds, getSrpTierForZoom, getTimelineTemporalDetail, getZoomFromRatio, getZoomRatio, snapTimelineZoomToTierAnchors, TIMELINE_TIER_LABELS, TIMELINE_ZOOM_MAX, TIMELINE_ZOOM_MIN, TIMELINE_ZOOM_STEP } from "../../../lib/timelineZoom";
+import { useSplitMode } from "../../../hooks/useSplitMode";
 
 export const TimelineToolbar: React.FC = () => {
   const { zoomLevel, pixelsPerSecond, setZoom, addTrack, swapClips, rippleEditEnabled, toggleRippleEdit } = useTimelineStore();
   const { selectedClipIds } = useUIStore();
   const { snapToGrid, setSnapToGrid } = useSettingsStore();
+  const { state: historyState, undo, redo } = useHistoryStore();
   const [splitMode, setSplitMode] = useState(false);
   const [linkMode, setLinkMode] = useState(true);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const zoomRailRef = useRef<HTMLDivElement>(null);
+
+  // Split mode hook
+  useSplitMode({
+    enabled: splitMode,
+    onSplit: (clipId, time) => {
+      console.log(`[TimelineToolbar] Split executed: ${clipId} at ${time.toFixed(2)}s`);
+    },
+    onMessage: (message) => {
+      setToastMessage(message);
+      setTimeout(() => setToastMessage(null), 2000);
+    },
+  });
 
   const ZOOM_THUMB_SIZE_PX = 22;
   const ZOOM_RAIL_WIDTH_PX = 176; // w-44
@@ -102,6 +117,17 @@ export const TimelineToolbar: React.FC = () => {
     <TooltipProvider>
       <div data-timeline-interactive="true" className="h-12 border-b border-timeline-toolbar-border flex items-center px-3 gap-2">
         <div className="flex items-center gap-1">
+          <Tool label="Undo (Cmd+Z)">
+            <Button variant="ghost" size="icon-sm" className={toolButton} onClick={undo} disabled={!historyState.canUndo}>
+              <Undo2 className="w-4 h-4" />
+            </Button>
+          </Tool>
+          <Tool label="Redo (Cmd+Shift+Z)">
+            <Button variant="ghost" size="icon-sm" className={toolButton} onClick={redo} disabled={!historyState.canRedo}>
+              <Redo2 className="w-4 h-4" />
+            </Button>
+          </Tool>
+          <div className="w-px h-6 bg-timeline-toolbar-border mx-1" />
           <Tool label="Add video track">
             <Button variant="ghost" size="icon-sm" className={toolButton} onClick={() => addTrack("video")}>
               <Plus className="w-4 h-4" />
@@ -119,7 +145,7 @@ export const TimelineToolbar: React.FC = () => {
               <MousePointer2 className="w-4 h-4" />
             </Button>
           </Tool>
-          <Tool label="Cut tool">
+          <Tool label="Cut tool (S)">
             <Button variant="ghost" size="icon-sm" className={splitMode ? activeButton : toolButton} onClick={() => setSplitMode(!splitMode)}>
               <Scissors className="w-4 h-4" />
             </Button>
@@ -137,17 +163,6 @@ export const TimelineToolbar: React.FC = () => {
           <Tool label="Ripple edit mode (R) - Hold Shift while trimming">
             <Button variant="ghost" size="icon-sm" className={rippleEditEnabled ? activeButton : toolButton} onClick={toggleRippleEdit}>
               <Waves className="w-4 h-4" />
-            </Button>
-          </Tool>
-          <div className="w-px h-6 bg-timeline-toolbar-divider mx-1" />
-          <Tool label="Record audio">
-            <Button variant="ghost" size="icon-sm" className={toolButton}>
-              <Mic className="w-4 h-4" />
-            </Button>
-          </Tool>
-          <Tool label="Search in timeline">
-            <Button variant="ghost" size="icon-sm" className={toolButton}>
-              <Search className="w-4 h-4" />
             </Button>
           </Tool>
         </div>

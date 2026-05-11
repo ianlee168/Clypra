@@ -1,3 +1,30 @@
+/**
+ * Playback Store (DEPRECATED)
+ *
+ * ⚠️ DEPRECATED: This store is being replaced by the new PlaybackClock architecture.
+ *
+ * The old architecture had a fundamental design flaw:
+ * - Time was modeled as React state (discrete, triggers re-renders)
+ * - This caused 60fps React render storms
+ * - Canvas jobs were constantly cancelled/restarted
+ * - Video sync was hammered 60fps causing audio crackling
+ *
+ * The new architecture:
+ * - Time is an imperative signal (continuous, no React dependency)
+ * - Canvas rendering uses independent RAF loop
+ * - Video sync is event-driven with periodic drift correction
+ * - UI gets throttled snapshots (10fps max)
+ *
+ * Migration:
+ * - Use `usePlaybackClock()` for UI snapshots (timecode, scrubber)
+ * - Use `usePlaybackControls()` for control functions (play, pause, seek)
+ * - Use `getPlaybackClock()` for imperative reads in render loops
+ *
+ * See: IMPERATIVE_CLOCK_ARCHITECTURE.md
+ *
+ * @deprecated Use PlaybackClock instead (src/core/playback/PlaybackClock.ts)
+ */
+
 import { create } from "zustand";
 
 interface PlaybackStore {

@@ -7,6 +7,7 @@ import { Timeline } from "./timeline/Timeline";
 import { useTimelineStore } from "../../store/timelineStore";
 import { useProjectStore } from "../../store/projectStore";
 import { createClipFromAsset } from "../../lib/timelineClip";
+import { createTextClip, TEXT_PRESETS } from "../../lib/textClip";
 
 export const EditorLayout: React.FC = () => {
   const { tracks, addClip, addTrack, getTimelineEndTime } = useTimelineStore();
@@ -45,8 +46,46 @@ export const EditorLayout: React.FC = () => {
       });
 
       addClip(newClip);
+    } else if (type === "text") {
+      // Handle text clips
+      const targetTrackType = "text";
+
+      // Find or create text track
+      let targetTrack = tracks.find((track) => track.type === targetTrackType && !track.locked);
+
+      if (!targetTrack) {
+        addTrack(targetTrackType);
+        targetTrack = useTimelineStore.getState().tracks.find((t) => t.type === targetTrackType && !t.locked);
+      }
+
+      if (!targetTrack) return;
+
+      // Get the end time of all existing clips
+      const endTime = getTimelineEndTime();
+
+      // Determine preset settings
+      let presetConfig = {};
+      if (item.id && item.id.startsWith("text-")) {
+        const presetName = item.name?.toLowerCase().replace(/\s+/g, "") as keyof typeof TEXT_PRESETS;
+        if (TEXT_PRESETS[presetName]) {
+          presetConfig = TEXT_PRESETS[presetName];
+        }
+      }
+
+      // Create text clip
+      const textClip = createTextClip({
+        trackId: targetTrack.id,
+        startTime: endTime,
+        duration: 5.0,
+        text: item.name || "Text",
+        canvasWidth: project?.canvasWidth || 1920,
+        canvasHeight: project?.canvasHeight || 1080,
+        ...presetConfig,
+      });
+
+      addClip(textClip);
     } else {
-      // Handle other types (audio, text, stickers, effects, transitions, captions)
+      // Handle other types (audio, stickers, effects, transitions, captions)
       console.log(`[EditorLayout] Adding ${type} to timeline:`, item);
       // TODO: Implement handlers for other types
     }

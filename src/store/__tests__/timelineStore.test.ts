@@ -9,6 +9,7 @@ describe("timelineStore clip operations", () => {
       tracks: [],
       clips: [],
       mainVideoTrackId: null,
+      epoch: 0,
       zoomLevel: 1,
       scrollLeft: 0,
       pixelsPerSecond: 100,

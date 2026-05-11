@@ -1,6 +1,9 @@
 /**
- * Render module - fallback strategies and rendering utilities.
+ * Core Render Module
+ *
+ * Single-frame rendering from evaluated scenes.
+ * Foundation for export, thumbnails, and validation.
  */
 
-export type { FallbackStrategy, FallbackFrame } from "./fallback";
-export { getFallbackFrame, renderFallbackToCanvas } from "./fallback";
+export * from "./frameRenderer";
+export * from "./rasterizer";

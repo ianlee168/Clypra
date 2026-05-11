@@ -844,8 +844,14 @@ pub fn run() {
             decode_frame_gpu,
             decode_frames_streaming,
             release_video_decoder,
-            // Pyramid render engine
             get_render_artifact,
+            // Video export commands
+            commands::export::start_video_export,
+            commands::export::write_export_frame,
+            commands::export::finalize_video_export,
+            commands::export::cancel_video_export,
+            commands::export::check_ffmpeg_available,
+            commands::export::get_ffmpeg_version,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

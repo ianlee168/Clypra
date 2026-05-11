@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, RefObject } from "react";
-import { usePlaybackStore } from "../../../store/playbackStore";
+import { usePlaybackClock, usePlaybackControls } from "../../../hooks/usePlaybackClock";
 import { useTimelineStore } from "../../../store/timelineStore";
 
 interface PlayheadProps {
@@ -9,7 +9,8 @@ interface PlayheadProps {
 }
 
 export const Playhead: React.FC<PlayheadProps> = ({ pixelsPerSecond, duration, containerRef }) => {
-  const { currentTime, seek } = usePlaybackStore();
+  const clockState = usePlaybackClock();
+  const { seek } = usePlaybackControls();
   const { setScrollLeft } = useTimelineStore();
   const [isDragging, setIsDragging] = useState(false);
   const playheadRef = useRef<HTMLDivElement | null>(null);
@@ -18,6 +19,8 @@ export const Playhead: React.FC<PlayheadProps> = ({ pixelsPerSecond, duration, c
   const pointerIdRef = useRef<number | null>(null);
   const pointerXRef = useRef(0); // Pointer position in viewport space
   const dragOffsetRef = useRef(0); // Offset captured at drag start for smooth anchor
+
+  const currentTime = clockState.time;
 
   // ✅ Use same pixel mapping as Timeline scroll logic (rounded to avoid subpixel issues)
   const left = Math.max(0, Math.round(currentTime * pixelsPerSecond));

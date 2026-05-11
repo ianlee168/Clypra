@@ -1,0 +1,535 @@
+/**
+ * Frame Scheduler
+ *
+ * Orchestrates temporal rendering with proper cancellation,
+ * priority scheduling, and resource management.
+ *
+ * Architecture:
+ *   FrameRequest → Scheduler → Evaluation → Rasterization → Output
+ *
+ * Key principles:
+ * - Cancellation propagates through entire pipeline
+ * - Priority-based scheduling (realtime > export > background)
+ * - Resource pre-loading for batch operations
+ * - Progress tracking and telemetry
+ */
+
+import type { FrameRequest, FrameResult } from "../resources/types";
+import type { Clip, Track, MediaAsset, Project } from "../../types";
+import { evaluateSceneCached } from "../evaluation/evaluator";
+import { rasterizeScene } from "../render/rasterizer";
+import { getResourceManager } from "../resources/ResourceManager";
+
+/**
+ * Frame job status.
+ */
+export type FrameJobStatus = "pending" | "loading" | "evaluating" | "rasterizing" | "complete" | "cancelled" | "failed";
+
+/**
+ * Frame job.
+ * Represents a single frame render request with lifecycle tracking.
+ */
+export interface FrameJob {
+  /** Unique job ID */
+  id: string;
+
+  /** Frame request */
+  request: FrameRequest;
+
+  /** Current status */
+  status: FrameJobStatus;
+
+  /** Progress (0-1) */
+  progress: number;
+
+  /** Result (when complete) */
+  result?: FrameResult;
+
+  /** Error (when failed) */
+  error?: Error;
+
+  /** Cancellation token */
+  cancelled: boolean;
+
+  /** Timestamps */
+  createdAt: number;
+  startedAt?: number;
+  completedAt?: number;
+
+  /** Telemetry */
+  metrics: {
+    evaluationTimeMs?: number;
+    rasterTimeMs?: number;
+    resourceLoadTimeMs?: number;
+    totalTimeMs?: number;
+  };
+}
+
+/**
+ * Scheduler configuration.
+ */
+export interface SchedulerConfig {
+  /** Maximum concurrent jobs */
+  maxConcurrent?: number;
+
+  /** Enable telemetry */
+  enableTelemetry?: boolean;
+
+  /** Debug logging */
+  debug?: boolean;
+}
+
+/**
+ * Scheduler statistics.
+ */
+export interface SchedulerStats {
+  /** Total jobs processed */
+  totalJobs: number;
+
+  /** Jobs by status */
+  pending: number;
+  active: number;
+  complete: number;
+  cancelled: number;
+  failed: number;
+
+  /** Average times */
+  avgEvaluationTimeMs: number;
+  avgRasterTimeMs: number;
+  avgTotalTimeMs: number;
+
+  /** Cache hit rate */
+  cacheHitRate: number;
+}
+
+/**
+ * Frame scheduler.
+ * Orchestrates frame rendering with proper lifecycle management.
+ */
+export class FrameScheduler {
+  private jobs = new Map<string, FrameJob>();
+  private queue: FrameJob[] = [];
+  private activeJobs = new Set<string>();
+  private config: Required<SchedulerConfig>;
+  private nextJobId = 0;
+
+  // Timeline state (for evaluation)
+  private clips: Clip[] = [];
+  private tracks: Track[] = [];
+  private assets: MediaAsset[] = [];
+  private project: Project | null = null;
+  private epoch: number = 0;
+
+  // Telemetry
+  private stats = {
+    totalJobs: 0,
+    completedJobs: 0,
+    cancelledJobs: 0,
+    failedJobs: 0,
+    totalEvaluationTimeMs: 0,
+    totalRasterTimeMs: 0,
+    totalTimeMs: 0,
+    cacheHits: 0,
+    cacheMisses: 0,
+  };
+
+  constructor(config: SchedulerConfig = {}) {
+    this.config = {
+      maxConcurrent: config.maxConcurrent ?? 4,
+      enableTelemetry: config.enableTelemetry ?? true,
+      debug: config.debug ?? false,
+    };
+  }
+
+  /**
+   * Update timeline state.
+   * Must be called before scheduling frames.
+   */
+  updateTimeline(clips: Clip[], tracks: Track[], assets: MediaAsset[], project: Project | null, epoch: number): void {
+    this.clips = clips;
+    this.tracks = tracks;
+    this.assets = assets;
+    this.project = project;
+    this.epoch = epoch;
+  }
+
+  /**
+   * Schedule a frame render request.
+   *
+   * @param request - Frame request
+   * @returns Job ID
+   */
+  schedule(request: FrameRequest): string {
+    const job: FrameJob = {
+      id: `job-${this.nextJobId++}`,
+      request,
+      status: "pending",
+      progress: 0,
+      cancelled: false,
+      createdAt: Date.now(),
+      metrics: {},
+    };
+
+    this.jobs.set(job.id, job);
+    this.queue.push(job);
+    this.stats.totalJobs++;
+
+    // Sort queue by priority
+    this.sortQueue();
+
+    // Process queue
+    this.processQueue();
+
+    return job.id;
+  }
+
+  /**
+   * Cancel a job.
+   *
+   * @param jobId - Job ID
+   */
+  cancel(jobId: string): void {
+    const job = this.jobs.get(jobId);
+    if (job && !job.cancelled) {
+      job.cancelled = true;
+      job.status = "cancelled";
+      this.stats.cancelledJobs++;
+
+      if (this.config.debug) {
+        console.log(`[Scheduler] Cancelled job ${jobId}`);
+      }
+    }
+  }
+
+  /**
+   * Cancel all jobs.
+   */
+  cancelAll(): void {
+    for (const job of this.jobs.values()) {
+      if (!job.cancelled && job.status !== "complete") {
+        this.cancel(job.id);
+      }
+    }
+  }
+
+  /**
+   * Get job status.
+   *
+   * @param jobId - Job ID
+   * @returns Job or null
+   */
+  getJob(jobId: string): FrameJob | null {
+    return this.jobs.get(jobId) ?? null;
+  }
+
+  /**
+   * Wait for job completion.
+   *
+   * @param jobId - Job ID
+   * @returns Frame result
+   */
+  async wait(jobId: string): Promise<FrameResult> {
+    return new Promise((resolve, reject) => {
+      const checkJob = () => {
+        const job = this.jobs.get(jobId);
+        if (!job) {
+          reject(new Error(`Job ${jobId} not found`));
+          return;
+        }
+
+        if (job.status === "complete" && job.result) {
+          resolve(job.result);
+        } else if (job.status === "cancelled") {
+          reject(new Error("Job cancelled"));
+        } else if (job.status === "failed") {
+          reject(job.error || new Error("Job failed"));
+        } else {
+          // Check again in 16ms (~60fps)
+          setTimeout(checkJob, 16);
+        }
+      };
+
+      checkJob();
+    });
+  }
+
+  /**
+   * Get scheduler statistics.
+   */
+  getStats(): SchedulerStats {
+    const pending = Array.from(this.jobs.values()).filter((j) => j.status === "pending").length;
+    const active = this.activeJobs.size;
+    const complete = this.stats.completedJobs;
+    const cancelled = this.stats.cancelledJobs;
+    const failed = this.stats.failedJobs;
+
+    const avgEvaluationTimeMs = complete > 0 ? this.stats.totalEvaluationTimeMs / complete : 0;
+    const avgRasterTimeMs = complete > 0 ? this.stats.totalRasterTimeMs / complete : 0;
+    const avgTotalTimeMs = complete > 0 ? this.stats.totalTimeMs / complete : 0;
+
+    const totalCacheOps = this.stats.cacheHits + this.stats.cacheMisses;
+    const cacheHitRate = totalCacheOps > 0 ? this.stats.cacheHits / totalCacheOps : 0;
+
+    return {
+      totalJobs: this.stats.totalJobs,
+      pending,
+      active,
+      complete,
+      cancelled,
+      failed,
+      avgEvaluationTimeMs,
+      avgRasterTimeMs,
+      avgTotalTimeMs,
+      cacheHitRate,
+    };
+  }
+
+  /**
+   * Clear completed jobs.
+   */
+  clearCompleted(): void {
+    for (const [id, job] of this.jobs.entries()) {
+      if (job.status === "complete" || job.status === "cancelled" || job.status === "failed") {
+        this.jobs.delete(id);
+      }
+    }
+  }
+
+  /**
+   * Sort queue by priority.
+   */
+  private sortQueue(): void {
+    const priorityOrder = { realtime: 0, export: 1, background: 2 };
+
+    this.queue.sort((a, b) => {
+      const aPriority = priorityOrder[a.request.priority ?? "background"];
+      const bPriority = priorityOrder[b.request.priority ?? "background"];
+
+      if (aPriority !== bPriority) {
+        return aPriority - bPriority;
+      }
+
+      // Same priority: FIFO
+      return a.createdAt - b.createdAt;
+    });
+  }
+
+  /**
+   * Process queue.
+   */
+  private processQueue(): void {
+    // Process jobs up to max concurrent
+    while (this.activeJobs.size < this.config.maxConcurrent && this.queue.length > 0) {
+      const job = this.queue.shift();
+      if (job && !job.cancelled) {
+        this.processJob(job);
+      }
+    }
+  }
+
+  /**
+   * Process a single job.
+   */
+  private async processJob(job: FrameJob): Promise<void> {
+    this.activeJobs.add(job.id);
+    job.startedAt = Date.now();
+
+    try {
+      // Check cancellation
+      if (job.cancelled) {
+        throw new Error("Job cancelled");
+      }
+
+      // Step 1: Resource loading
+      job.status = "loading";
+      job.progress = 0.1;
+      const resourceStartTime = Date.now();
+
+      // Pre-load resources for this frame
+      await this.preloadResources(job);
+
+      job.metrics.resourceLoadTimeMs = Date.now() - resourceStartTime;
+
+      // Check cancellation
+      if (job.cancelled) {
+        throw new Error("Job cancelled");
+      }
+
+      // Step 2: Evaluation
+      job.status = "evaluating";
+      job.progress = 0.3;
+      const evalStartTime = Date.now();
+
+      const scene = evaluateSceneCached(job.request.time, this.clips, this.tracks, this.assets, this.project, this.epoch);
+
+      job.metrics.evaluationTimeMs = Date.now() - evalStartTime;
+      this.stats.totalEvaluationTimeMs += job.metrics.evaluationTimeMs;
+
+      // Check cancellation
+      if (job.cancelled) {
+        throw new Error("Job cancelled");
+      }
+
+      // Step 3: Rasterization
+      job.status = "rasterizing";
+      job.progress = 0.6;
+      const rasterStartTime = Date.now();
+
+      const rasterFrame = await rasterizeScene(scene, {
+        width: job.request.resolution.width,
+        height: job.request.resolution.height,
+        pixelRatio: job.request.pixelRatio,
+        colorSpace: job.request.colorSpace,
+      });
+
+      job.metrics.rasterTimeMs = Date.now() - rasterStartTime;
+      this.stats.totalRasterTimeMs += job.metrics.rasterTimeMs;
+
+      // Check cancellation
+      if (job.cancelled) {
+        throw new Error("Job cancelled");
+      }
+
+      // Step 4: Output conversion
+      job.progress = 0.9;
+
+      let outputData: ImageBitmap | ImageData | Blob;
+
+      switch (job.request.outputFormat) {
+        case "imagebitmap":
+          if (rasterFrame.canvas instanceof OffscreenCanvas) {
+            outputData = await rasterFrame.canvas.transferToImageBitmap();
+          } else {
+            outputData = await createImageBitmap(rasterFrame.canvas);
+          }
+          break;
+
+        case "imagedata":
+          outputData = rasterFrame.ctx.getImageData(0, 0, job.request.resolution.width, job.request.resolution.height);
+          break;
+
+        case "blob":
+        default:
+          if (rasterFrame.canvas instanceof OffscreenCanvas) {
+            outputData = await rasterFrame.canvas.convertToBlob({
+              type: "image/png",
+              quality: job.request.quality,
+            });
+          } else {
+            outputData = await new Promise<Blob>((resolve, reject) => {
+              (rasterFrame.canvas as HTMLCanvasElement).toBlob(
+                (blob) => {
+                  if (blob) resolve(blob);
+                  else reject(new Error("Failed to create blob"));
+                },
+                "image/png",
+                job.request.quality,
+              );
+            });
+          }
+          break;
+      }
+
+      // Complete
+      job.completedAt = Date.now();
+      job.metrics.totalTimeMs = job.completedAt - job.startedAt;
+      this.stats.totalTimeMs += job.metrics.totalTimeMs;
+
+      job.result = {
+        request: job.request,
+        data: outputData,
+        renderTimeMs: job.metrics.totalTimeMs,
+        resourcesCached: true, // TODO: Track actual cache hits
+      };
+
+      job.status = "complete";
+      job.progress = 1.0;
+      this.stats.completedJobs++;
+
+      if (this.config.debug) {
+        console.log(`[Scheduler] Completed job ${job.id} in ${job.metrics.totalTimeMs}ms`);
+      }
+    } catch (error) {
+      job.status = job.cancelled ? "cancelled" : "failed";
+      job.error = error as Error;
+
+      if (!job.cancelled) {
+        this.stats.failedJobs++;
+      }
+
+      if (this.config.debug) {
+        console.error(`[Scheduler] Job ${job.id} failed:`, error);
+      }
+    } finally {
+      this.activeJobs.delete(job.id);
+      this.processQueue(); // Process next job
+    }
+  }
+
+  /**
+   * Pre-load resources for a frame.
+   * Analyzes the scene and pre-loads all media resources.
+   */
+  private async preloadResources(job: FrameJob): Promise<void> {
+    // Evaluate scene to discover required resources
+    const scene = evaluateSceneCached(job.request.time, this.clips, this.tracks, this.assets, this.project, this.epoch);
+
+    const resourceManager = getResourceManager();
+    const loadPromises: Promise<void>[] = [];
+
+    // Pre-load all media resources
+    for (const layer of scene.visualLayers) {
+      if (layer.layerType === "media") {
+        // Check cancellation before loading
+        if (job.cancelled) {
+          throw new Error("Job cancelled");
+        }
+
+        // Acquire resource (will cache if not already loaded)
+        const loadPromise = resourceManager
+          .acquire(layer.sourcePath, "image-bitmap")
+          .then((handle) => {
+            // Store handle in layer for rasterizer to use
+            // Note: We can't mutate the layer here, but the resource is now cached
+            // The rasterizer will use the cached resource via the resource manager
+          })
+          .catch((error) => {
+            // Log but don't fail - rasterizer will handle missing resources
+            if (this.config.debug) {
+              console.warn(`Failed to pre-load resource: ${layer.sourcePath}`, error);
+            }
+          });
+
+        loadPromises.push(loadPromise);
+      }
+    }
+
+    // Wait for all resources to load
+    await Promise.all(loadPromises);
+  }
+}
+
+/**
+ * Global frame scheduler instance.
+ */
+let globalScheduler: FrameScheduler | null = null;
+
+/**
+ * Get or create global frame scheduler.
+ */
+export function getFrameScheduler(): FrameScheduler {
+  if (!globalScheduler) {
+    globalScheduler = new FrameScheduler();
+  }
+  return globalScheduler;
+}
+
+/**
+ * Reset global frame scheduler (for testing).
+ */
+export function resetFrameScheduler(): void {
+  if (globalScheduler) {
+    globalScheduler.cancelAll();
+  }
+  globalScheduler = null;
+}
