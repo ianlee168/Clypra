@@ -228,6 +228,13 @@ export function evaluateScene(time: number, clips: Clip[], tracks: Track[], asse
   // TODO: Detect and evaluate transitions between clips
 
   // ─── 6. Create Metadata ────────────────────────────────────────────────────
+  
+  // Create deterministic hash of active media to trigger lifecycle events
+  const activeMediaHash = visualLayers
+    .filter((l) => l.layerType === "media")
+    .map((l) => l.clipId)
+    .sort() // Sort to prevent ordering bugs
+    .join("|");
 
   const metadata: SceneMetadata = {
     time,
@@ -236,6 +243,7 @@ export function evaluateScene(time: number, clips: Clip[], tracks: Track[], asse
     frameRate: project?.frameRate ?? 30,
     isGap: visualLayers.length === 0,
     fallbackStrategy: visualLayers.length === 0 ? "black" : undefined,
+    activeMediaHash,
   };
 
   // ─── 7. Return Evaluated Scene ────────────────────────────────────────────

@@ -37,6 +37,9 @@ export interface RasterTarget {
 
   /** Background color */
   backgroundColor?: string;
+
+  /** Active video elements (bypass decoding) */
+  videoElements?: Map<string, HTMLVideoElement>;
 }
 
 /**
@@ -110,7 +113,7 @@ export async function rasterizeScene(scene: EvaluatedScene, target: RasterTarget
 
   // Rasterize all visual layers
   for (const layer of scene.visualLayers) {
-    await rasterizeLayer(ctx, layer, scaleX, scaleY);
+    await rasterizeLayer(ctx, layer, scaleX, scaleY, target);
   }
 
   const rasterTimeMs = performance.now() - startTime;
@@ -129,7 +132,7 @@ export async function rasterizeScene(scene: EvaluatedScene, target: RasterTarget
 /**
  * Rasterize a single visual layer.
  */
-async function rasterizeLayer(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, layer: EvaluatedMediaLayer | EvaluatedTextLayer, scaleX: number, scaleY: number): Promise<void> {
+async function rasterizeLayer(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, layer: EvaluatedMediaLayer | EvaluatedTextLayer, scaleX: number, scaleY: number, target: RasterTarget): Promise<void> {
   ctx.save();
 
   // Apply transform
@@ -154,7 +157,7 @@ async function rasterizeLayer(ctx: CanvasRenderingContext2D | OffscreenCanvasRen
 
   // Rasterize based on layer type
   if (layer.layerType === "media") {
-    await rasterizeMediaLayer(ctx, layer, width, height);
+    await rasterizeMediaLayer(ctx, layer, width, height, target);
   } else if (layer.layerType === "text") {
     rasterizeTextLayer(ctx, layer, width, height, scaleX, scaleY);
   }
@@ -166,11 +169,21 @@ async function rasterizeLayer(ctx: CanvasRenderingContext2D | OffscreenCanvasRen
  * Rasterize a media layer.
  * Uses pre-resolved resources when available.
  */
-async function rasterizeMediaLayer(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, layer: EvaluatedMediaLayer, width: number, height: number): Promise<void> {
+async function rasterizeMediaLayer(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, layer: EvaluatedMediaLayer, width: number, height: number, target: RasterTarget): Promise<void> {
   try {
+    // 1. Try to use active video element (bypasses decoding)
+    if (layer.mediaType === "video" && target.videoElements) {
+      const key = `${layer.clipId}-${layer.mediaId}`;
+      const video = target.videoElements.get(key);
+      if (video && video.readyState >= 2) { // HAVE_CURRENT_DATA
+        ctx.drawImage(video, -width / 2, -height / 2, width, height);
+        return;
+      }
+    }
+
     let imageBitmap: ImageBitmap | null = null;
 
-    // Try to use pre-resolved resource first
+    // 2. Try to use pre-resolved resource
     if (layer.resourceHandle) {
       const resourceManager = getResourceManager();
       const resource = resourceManager.get(layer.resourceHandle);

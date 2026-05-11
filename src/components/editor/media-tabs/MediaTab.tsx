@@ -47,7 +47,6 @@ export const MediaTab: React.FC<MediaTabProps> = ({ onAddToTimeline }) => {
           // Check if asset already exists
           const existingAsset = mediaAssets.find((a) => a.path === filePath);
           if (existingAsset) {
-            console.log(`[MediaTab] Asset already imported, skipping: ${filePath}`);
             continue;
           }
 
@@ -134,39 +133,31 @@ export const MediaTab: React.FC<MediaTabProps> = ({ onAddToTimeline }) => {
           items={[
             usedMediaIds.has(contextMenu.mediaId)
               ? {
-                  label: "Remove from Timeline",
-                  onClick: () => {
-                    const { removeClip, normalizeTrack } = useTimelineStore.getState();
-                    const affectedTracks = new Set<string>();
+                label: "Remove from Timeline",
+                onClick: () => {
+                  const { removeClip, normalizeTrack } = useTimelineStore.getState();
+                  const affectedTracks = new Set<string>();
 
-                    // Find all clips using this media asset
-                    const clipsToRemove = clips.filter((c) => c.mediaId === contextMenu.mediaId);
+                  // Find all clips using this media asset
+                  const clipsToRemove = clips.filter((c) => c.mediaId === contextMenu.mediaId);
 
-                    // Note: Main track protection removed - users can remove any clips
-                    // Timeline validation will inform about gaps, but never blocks removal
+                  // Remove all clips using this asset
+                  clipsToRemove.forEach((clip) => {
+                    affectedTracks.add(clip.trackId);
+                    removeClip(clip.id);
+                  });
 
-                    console.log("[MediaTab] 🗑️ Removing clips from timeline", {
-                      mediaId: contextMenu.mediaId,
-                      clipCount: clipsToRemove.length,
-                    });
-
-                    // Remove all clips using this asset
-                    clipsToRemove.forEach((clip) => {
-                      affectedTracks.add(clip.trackId);
-                      removeClip(clip.id);
-                    });
-
-                    // Normalize affected tracks to close gaps
-                    affectedTracks.forEach((trackId) => normalizeTrack(trackId));
-                  },
-                }
-              : {
-                  label: "Add to Timeline",
-                  onClick: () => {
-                    const asset = mediaAssets.find((a) => a.id === contextMenu.mediaId);
-                    if (asset) onAddToTimeline?.(asset, "media");
-                  },
+                  // Normalize affected tracks to close gaps
+                  affectedTracks.forEach((trackId) => normalizeTrack(trackId));
                 },
+              }
+              : {
+                label: "Add to Timeline",
+                onClick: () => {
+                  const asset = mediaAssets.find((a) => a.id === contextMenu.mediaId);
+                  if (asset) onAddToTimeline?.(asset, "media");
+                },
+              },
             { label: "Delete", onClick: () => removeMediaAsset(contextMenu.mediaId), danger: true },
           ]}
           position={{ x: contextMenu.x, y: contextMenu.y }}

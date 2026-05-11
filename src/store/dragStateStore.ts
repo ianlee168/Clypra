@@ -35,7 +35,6 @@ export const useDragStateStore = create<DragStateStore>((set) => ({
   grabOffsetY: 0,
 
   setDragging: (clip, trackId, startTime) => {
-    console.log("[STORE] 🎬 setDragging", { clipId: clip.id, trackId, startTime });
     set({
       draggingClip: clip,
       originalTrackId: trackId,
@@ -44,7 +43,6 @@ export const useDragStateStore = create<DragStateStore>((set) => ({
   },
 
   clearDragging: () => {
-    console.log("[STORE] 🧹 clearDragging");
     set({
       draggingClip: null,
       originalTrackId: null,
@@ -57,7 +55,6 @@ export const useDragStateStore = create<DragStateStore>((set) => ({
   },
 
   setInsertion: (trackId, time) => {
-    console.log("[STORE] 📍 setInsertion", { trackId, time });
     set({
       insertionTrackId: trackId,
       insertionTime: time,
@@ -65,7 +62,6 @@ export const useDragStateStore = create<DragStateStore>((set) => ({
   },
 
   setGrabOffset: (x, y) => {
-    console.log("[STORE] 🎯 setGrabOffset", { x, y });
     set({
       grabOffsetX: x,
       grabOffsetY: y,
@@ -74,7 +70,6 @@ export const useDragStateStore = create<DragStateStore>((set) => ({
 
   // ✅ Bug Fix 2: Atomic update - combines updateClip + clearDragging into one render
   commitDrop: (clipId, trackId, startTime) => {
-    console.log("[STORE] 💾 commitDrop", { clipId, trackId, startTime });
     // Import timelineStore dynamically to avoid circular dependency
     const { updateClip } = useTimelineStore.getState();
 

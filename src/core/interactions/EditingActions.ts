@@ -110,13 +110,6 @@ export class EditingActions {
       const leftClip = newState.clips.find((c) => c.id === clipId);
       const rightClip = newState.clips.find((c) => c.trackId === clip.trackId && c.startTime === time && c.mediaId === clip.mediaId);
 
-      console.log(`[EditingActions] Split executed via ${source}:`, {
-        clipId,
-        time,
-        leftClipId: leftClip?.id,
-        rightClipId: rightClip?.id,
-      });
-
       return {
         success: true,
         leftClipId: leftClip?.id,

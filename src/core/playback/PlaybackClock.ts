@@ -77,6 +77,18 @@ export class PlaybackClock {
    * This is how consumers should read time - NOT via React state.
    */
   get time(): number {
+    // If playing, calculate time synchronously based on audio context.
+    // This ensures accurate time even if requestAnimationFrame is suspended (e.g. background tab).
+    if (this._state === "playing" && this._audioContext && this._audioContext.state === "running") {
+      const elapsed = (this._audioContext.currentTime - this._playStartAudioTime) * this._speed;
+      const computedTime = this._playStartClockTime + elapsed;
+      
+      // Clamp to duration if we've reached the end
+      if (computedTime >= this._duration) {
+         return this._duration;
+      }
+      return computedTime;
+    }
     return this._time;
   }
 
@@ -113,7 +125,7 @@ export class PlaybackClock {
    */
   getState(): PlaybackClockState {
     return {
-      time: this._time,
+      time: this.time,
       state: this._state,
       speed: this._speed,
       duration: this._duration,
@@ -164,25 +176,17 @@ export class PlaybackClock {
    * Start playback.
    */
   play(): void {
-    console.log("[PlaybackClock] play() called", {
-      currentState: this._state,
-      time: this._time,
-      duration: this._duration,
-    });
 
     if (this._state === "playing") {
-      console.log("[PlaybackClock] Already playing, ignoring");
       return;
     }
 
     // Initialize AudioContext for high-precision timing
     if (!this._audioContext) {
       this._audioContext = new AudioContext();
-      console.log("[PlaybackClock] Created AudioContext");
     }
 
     if (this._audioContext.state === "suspended") {
-      console.log("[PlaybackClock] Resuming suspended AudioContext");
       this._audioContext.resume();
     }
 
@@ -195,7 +199,6 @@ export class PlaybackClock {
 
     // Start RAF loop
     this._rafId = requestAnimationFrame(this._tick);
-    console.log("[PlaybackClock] Started RAF loop, state is now playing");
   }
 
   /**

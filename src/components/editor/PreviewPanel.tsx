@@ -160,7 +160,12 @@ const ProgramPreview: React.FC = () => {
     avgTotalTimeMs: number;
     cacheHitRate: number;
     active: number;
+    droppedFrames: number;
+    driftMagnitude: number;
   } | null>(null);
+
+  const droppedFramesRef = useRef(0);
+  const maxDriftRef = useRef(0);
 
   // Initialize clock with project settings (only when they actually change)
   const prevDurationRef = useRef<number>(0);
@@ -256,16 +261,25 @@ const ProgramPreview: React.FC = () => {
       rafId = requestAnimationFrame(renderLoop);
 
       // Drop frame if still rendering a previous frame
-      if (isRendering) return;
+      if (isRendering) {
+        droppedFramesRef.current++;
+        return;
+      }
 
       isRendering = true;
+      const timeToRender = clock.time;
 
-      // IMPERATIVE READ - no React dependency
-      const time = clock.time;
+      // Build map of active video elements to bypass resource decoding
+      const activeVideoElements = new Map<string, HTMLVideoElement>();
+      for (const [key, video] of Object.entries(videoRefs.current)) {
+        if (video) {
+          activeVideoElements.set(key, video);
+        }
+      }
 
-      // Schedule frame render (no cancellation on every frame)
+      // Schedule frame render
       const jobId = scheduler.schedule({
-        time,
+        time: timeToRender,
         resolution: {
           width: displayWidth,
           height: displayHeight,
@@ -273,6 +287,7 @@ const ProgramPreview: React.FC = () => {
         pixelRatio: 1,
         outputFormat: "imagebitmap",
         priority: "realtime",
+        videoElements: activeVideoElements,
       });
 
       scheduler
@@ -298,7 +313,10 @@ const ProgramPreview: React.FC = () => {
             avgTotalTimeMs: stats.avgTotalTimeMs,
             cacheHitRate: stats.cacheHitRate,
             active: stats.active,
+            droppedFrames: droppedFramesRef.current,
+            driftMagnitude: maxDriftRef.current,
           });
+          maxDriftRef.current = 0; // Reset after reporting
         })
         .catch((error: Error) => {
           isRendering = false;
@@ -320,33 +338,14 @@ const ProgramPreview: React.FC = () => {
     };
   }, [useCanvasPreview, clips, tracks, mediaAssets, project, epoch, clock]);
 
-  // Generate a key of currently visible video layers to trigger sync when new videos appear
-  const currentVideoClipsKey = useMemo(() => {
-    return scene.visualLayers
-      .filter((l): l is EvaluatedMediaLayer => l.layerType === "media" && l.mediaType === "video")
-      .map((l) => `${l.clipId}-${l.mediaId}`)
-      .join(",");
-  }, [scene.visualLayers]);
+
 
   // Video sync - EVENT DRIVEN (only on state changes, not every frame)
   useEffect(() => {
-    console.log("[PreviewPanel] Video sync effect triggered", {
-      state: clockState.state,
-      videoCount: Object.keys(videoRefs.current).length,
-    });
-
     const currentClockTime = clock.time;
 
     Object.values(videoRefs.current).forEach((video) => {
       if (!video) return;
-
-      console.log("[PreviewPanel] Syncing video", {
-        mediaId: video.dataset.mediaId,
-        clipId: video.dataset.clipId,
-        videoDuration: video.duration,
-        clockState: clockState.state,
-        videoPaused: video.paused,
-      });
 
       // Audio settings
       video.muted = isMuted || volume === 0;
@@ -367,11 +366,9 @@ const ProgramPreview: React.FC = () => {
           // Set time when paused or when starting playback
           if (clockState.state !== "playing") {
             video.currentTime = targetTime;
-            console.log("[PreviewPanel] Set video.currentTime to", targetTime);
           } else if (video.paused) {
             // Starting playback - set initial time
             video.currentTime = targetTime;
-            console.log("[PreviewPanel] Set initial video.currentTime to", targetTime);
           }
         }
       }
@@ -379,21 +376,19 @@ const ProgramPreview: React.FC = () => {
       // Play/pause based on clock state
       if (clockState.state === "playing") {
         if (video.paused) {
-          console.log("[PreviewPanel] Calling video.play()");
           const p = video.play();
           if (p && typeof p.catch === "function")
             void p.catch((err) => {
-              console.error("[PreviewPanel] video.play() failed:", err);
+              console.error("video.play() failed:", err);
             });
         }
       } else {
         if (!video.paused) {
-          console.log("[PreviewPanel] Calling video.pause()");
           video.pause();
         }
       }
     });
-  }, [clockState.state, isMuted, volume, clockState.speed, clips, clock, previewVideoReadyTick, currentVideoClipsKey]);
+  }, [clockState.state, isMuted, volume, clockState.speed, clips, clock, previewVideoReadyTick, scene.metadata.activeMediaHash]);
 
   // Periodic drift correction (low frequency, not every frame)
   useEffect(() => {
@@ -429,15 +424,38 @@ const ProgramPreview: React.FC = () => {
           const targetTime = Math.max(0, Math.min(sourceTime, Math.max(0, video.duration - 0.01)));
           const drift = Math.abs(video.currentTime - targetTime);
 
-          // Only correct if drift exceeds 400ms to avoid constant crackling
-          if (drift > 0.4) {
-            console.log("[PreviewPanel] Drift correction", {
-              clipId,
-              videoCurrent: video.currentTime,
-              targetTime,
-              drift,
-            });
+          maxDriftRef.current = Math.max(maxDriftRef.current, drift);
+
+          // Add DOM-level preservesPitch to prevent crackling on speed changes
+          if ('preservesPitch' in video) {
+            (video as any).preservesPitch = false;
+          }
+
+          if (drift < 0.1) { // 100ms tolerance for natural jitter
+            // <100ms: Ignore, perfect sync
+            if (Math.abs(video.playbackRate - clockState.speed) > 0.01) {
+              video.playbackRate = clockState.speed;
+            }
+          } else if (drift >= 0.1 && drift <= 0.3) {
+            // 100ms - 300ms: Soft playbackRate correction (2% instead of 5%)
+            const correctionSpeed = video.currentTime < targetTime ? clockState.speed * 1.02 : clockState.speed * 0.98;
+            if (Math.abs(video.playbackRate - correctionSpeed) > 0.01) {
+              console.log("[PreviewPanel] Soft drift correction", { drift: drift.toFixed(3), newSpeed: correctionSpeed.toFixed(2), currentTime: video.currentTime });
+              video.playbackRate = correctionSpeed;
+            }
+          } else if (drift > 0.3 && drift <= 0.6) {
+            // 300ms - 600ms: Hard seek
+            console.warn("[PreviewPanel] Hard seek drift correction", { drift: drift.toFixed(3), targetTime });
             video.currentTime = targetTime;
+            video.playbackRate = clockState.speed;
+          } else if (drift > 0.6) {
+            // >600ms: Playback recovery reset
+            console.warn("[PreviewPanel] Playback recovery reset", { drift: drift.toFixed(3), targetTime });
+            video.pause();
+            video.currentTime = targetTime;
+            video.playbackRate = clockState.speed;
+            const p = video.play();
+            if (p && typeof p.catch === "function") p.catch(console.error);
           }
         }
       });
@@ -524,8 +542,11 @@ const ProgramPreview: React.FC = () => {
                   }}
                   className="bg-black"
                 />
-                {/* Hidden video elements for audio sync (ENGINE CLOCK IS MASTER) */}
-                <div className="absolute opacity-0 pointer-events-none" style={{ width: 0, height: 0, overflow: "hidden" }}>
+                {/* Hidden video elements for audio/video sync (ENGINE CLOCK IS MASTER). 
+                    CRITICAL: Do NOT use width: 0, height: 0, or opacity: 0. 
+                    Browsers throttle decoding for invisible videos, destroying A/V sync.
+                    Keep them 1x1 pixel with near-zero opacity to force hardware decoding. */}
+                <div className="absolute top-0 left-0 pointer-events-none -z-10" style={{ width: "1px", height: "1px", opacity: 0.001, overflow: "hidden" }}>
                   {scene.visualLayers
                     .filter((l): l is EvaluatedMediaLayer => l.layerType === "media" && l.mediaType === "video")
                     .map((layer) => (
@@ -541,6 +562,7 @@ const ProgramPreview: React.FC = () => {
                         playsInline
                         preload="auto"
                         onLoadedMetadata={() => setPreviewVideoReadyTick((n) => n + 1)}
+                        className="w-full h-full"
                       />
                     ))}
                 </div>
@@ -659,6 +681,14 @@ const ProgramPreview: React.FC = () => {
               <span className="text-white/60">Active:</span>
               <span>{telemetryStats.active}</span>
             </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-white/60">Dropped:</span>
+              <span className={telemetryStats.droppedFrames > 0 ? "text-yellow-400" : ""}>{telemetryStats.droppedFrames}</span>
+            </div>
+            <div className="flex justify-between gap-4">
+              <span className="text-white/60">Max Drift:</span>
+              <span className={telemetryStats.driftMagnitude > 0.04 ? "text-yellow-400" : ""}>{(telemetryStats.driftMagnitude * 1000).toFixed(0)}ms</span>
+            </div>
           </div>
         )}
       </div>
@@ -735,11 +765,6 @@ const ProgramPreview: React.FC = () => {
           </button>
           <button
             onClick={() => {
-              console.log("[PreviewPanel] Play/Pause button clicked", {
-                isPlaying,
-                clockState: clockState.state,
-                action: isPlaying ? "pause" : "play",
-              });
               isPlaying ? pause() : play();
             }}
             className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-white/6 transition-colors text-text-primary mx-1"

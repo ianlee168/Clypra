@@ -75,6 +75,9 @@ export interface FrameRequest {
 
   /** Priority (for scheduling) */
   priority?: "realtime" | "background" | "export";
+
+  /** Map of active video elements (key: clipId-mediaId) to bypass decoding */
+  videoElements?: Map<string, HTMLVideoElement>;
 }
 
 /**

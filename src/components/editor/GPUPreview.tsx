@@ -60,32 +60,23 @@ export function GPUPreview({ videoPath, currentTime, isPlaying, width, height, d
 
     // Skip if already initialized
     if (gpuCacheRef.current) {
-      console.log("[GPUPreview] GPU cache already initialized, skipping");
       return;
     }
 
-    console.log("[GPUPreview] 🎬 Starting GPU cache initialization...");
-
     // Try to use global GPU cache first
     if (useGlobalCache) {
-      console.log("[GPUPreview] Attempting to use global GPU cache...");
       const globalCache = globalGPUCache.getCache();
       if (globalCache) {
         gpuCacheRef.current = globalCache;
         setUseGPUCache(true);
-        console.log("[GPUPreview] ✅ Using global GPU cache");
         return;
-      } else {
-        console.log("[GPUPreview] Global cache not available, will create local cache");
       }
     }
 
     // Initialize local GPU cache
     try {
-      console.log("[GPUPreview] Creating local GPU texture cache...");
       gpuCacheRef.current = new GPUTextureCache(canvasRef.current);
       setUseGPUCache(true);
-      console.log("[GPUPreview] ✅ Local GPU texture cache initialized successfully");
     } catch (err) {
       console.error("[GPUPreview] ❌ Failed to initialize GPU cache:", err);
       setUseGPUCache(false);
@@ -94,7 +85,6 @@ export function GPUPreview({ videoPath, currentTime, isPlaying, width, height, d
     return () => {
       // Only dispose local cache, not global cache
       if (!useGlobalCache && gpuCacheRef.current) {
-        console.log("[GPUPreview] Disposing local GPU cache");
         gpuCacheRef.current.dispose();
         gpuCacheRef.current = null;
       }

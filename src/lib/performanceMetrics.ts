@@ -16,7 +16,6 @@
  *
  * // Get current metrics
  * const metrics = performanceMetrics.getMetrics();
- * console.log('Scrub FPS:', metrics.scrubFPS);
  * ```
  */
 

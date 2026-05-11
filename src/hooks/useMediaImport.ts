@@ -34,7 +34,6 @@ export const useMediaImport = () => {
           // Check if asset already exists
           const existingAsset = mediaAssets.find((a) => a.path === path);
           if (existingAsset) {
-            console.log(`[useMediaImport] Asset already imported, skipping: ${path}`);
             skippedCount++;
             continue;
           }
@@ -43,9 +42,7 @@ export const useMediaImport = () => {
           const type = getMediaType(path);
 
           if (type === "video" || type === "audio") {
-            console.log(`[useMediaImport] Getting metadata for: ${path}`);
             const metadata: VideoMetadata = await invoke("get_video_metadata", { path });
-            console.log(`[useMediaImport] Metadata received:`, metadata);
 
             // Generate poster frame/thumbnail
             let posterFrame: string | undefined;
@@ -65,11 +62,8 @@ export const useMediaImport = () => {
               // Try to extract album artwork from audio file
               try {
                 coverArt = (await invoke("extract_audio_artwork", { path })) as string | undefined;
-                if (coverArt) {
-                  console.log("[useMediaImport] Extracted album artwork");
-                }
               } catch (err) {
-                console.log("[useMediaImport] No album artwork found");
+                // Ignore, fallback to waveform
               }
 
               // Generate waveform thumbnail for audio files
@@ -81,9 +75,8 @@ export const useMediaImport = () => {
                   barColor: "#22d3ee",
                   backgroundColor: "#1e293b",
                 });
-                console.log("[useMediaImport] Generated waveform thumbnail for audio");
               } catch (err) {
-                console.error("Failed to generate waveform:", err);
+                // Ignore
               }
             }
 
@@ -99,7 +92,6 @@ export const useMediaImport = () => {
               coverArt,
               size: metadata.size,
             };
-            console.log(`[useMediaImport] Adding asset with duration=${asset.duration}`);
             addMediaAsset(asset);
           } else {
             // For images, use the convertFileSrc to create a proper asset URL

@@ -81,7 +81,6 @@ export const useKeyboardShortcuts = () => {
         }
       } else if (isMeta && e.key === "i") {
         e.preventDefault();
-        console.log("Import media");
       } else if (isMeta && e.shiftKey && e.key === "S") {
         // Ctrl+Shift+S — swap selected clips
         e.preventDefault();

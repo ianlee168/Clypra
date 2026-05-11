@@ -195,9 +195,7 @@ export class FrameScheduler {
       job.status = "cancelled";
       this.stats.cancelledJobs++;
 
-      if (this.config.debug) {
-        console.log(`[Scheduler] Cancelled job ${jobId}`);
-      }
+
     }
   }
 
@@ -380,6 +378,7 @@ export class FrameScheduler {
         height: job.request.resolution.height,
         pixelRatio: job.request.pixelRatio,
         colorSpace: job.request.colorSpace,
+        videoElements: job.request.videoElements,
       });
 
       job.metrics.rasterTimeMs = Date.now() - rasterStartTime;
@@ -445,10 +444,6 @@ export class FrameScheduler {
       job.status = "complete";
       job.progress = 1.0;
       this.stats.completedJobs++;
-
-      if (this.config.debug) {
-        console.log(`[Scheduler] Completed job ${job.id} in ${job.metrics.totalTimeMs}ms`);
-      }
     } catch (error) {
       job.status = job.cancelled ? "cancelled" : "failed";
       job.error = error as Error;
@@ -485,9 +480,20 @@ export class FrameScheduler {
           throw new Error("Job cancelled");
         }
 
+        // If we have an active video element for this layer, bypass resource manager
+        if (layer.mediaType === "video" && job.request.videoElements) {
+          const key = `${layer.clipId}-${layer.mediaId}`;
+          if (job.request.videoElements.has(key)) {
+            continue; // We will draw directly from the video element
+          }
+        }
+
         // Acquire resource (will cache if not already loaded)
+        // For images, use "image-bitmap". For videos without elements, use "video-element"
+        const type = layer.mediaType === "video" ? "video-element" : "image-bitmap";
+
         const loadPromise = resourceManager
-          .acquire(layer.sourcePath, "image-bitmap")
+          .acquire(layer.sourcePath, type)
           .then((handle) => {
             // Store handle in layer for rasterizer to use
             // Note: We can't mutate the layer here, but the resource is now cached

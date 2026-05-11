@@ -30,9 +30,6 @@ export class GPUTextureCache {
   private textureLocation: WebGLUniformLocation | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
-    console.log("[GPUTextureCache] 🚀 Starting initialization...");
-    console.log("[GPUTextureCache] Canvas dimensions:", canvas.width, "x", canvas.height);
-
     const gl = canvas.getContext("webgl2", {
       alpha: true,
       antialias: false,
@@ -43,15 +40,9 @@ export class GPUTextureCache {
     });
 
     if (!gl) {
-      console.error("[GPUTextureCache] ❌ WebGL2 not supported!");
-      console.error("[GPUTextureCache] Browser info:", navigator.userAgent);
       throw new Error("WebGL2 not supported");
     }
 
-    console.log("[GPUTextureCache] ✅ WebGL2 context created");
-    console.log("[GPUTextureCache] WebGL version:", gl.getParameter(gl.VERSION));
-    console.log("[GPUTextureCache] GLSL version:", gl.getParameter(gl.SHADING_LANGUAGE_VERSION));
-    console.log("[GPUTextureCache] Renderer:", gl.getParameter(gl.RENDERER));
 
     this.gl = gl;
     this.textures = new Map();
@@ -59,48 +50,33 @@ export class GPUTextureCache {
 
     // Set initial viewport (CRITICAL for rendering)
     this.gl.viewport(0, 0, canvas.width, canvas.height);
-    console.log("[GPUTextureCache] Viewport set to:", canvas.width, "x", canvas.height);
 
     // Initialize shader program and buffers
     try {
-      console.log("[GPUTextureCache] Initializing WebGL shaders and buffers...");
       this.initializeWebGL();
-      console.log("[GPUTextureCache] ✅ Initialization complete!");
     } catch (err) {
-      console.error("[GPUTextureCache] ❌ Failed to initialize WebGL:", err);
       throw err;
     }
   }
 
   private initializeWebGL() {
-    console.log("[GPUTextureCache] Creating shader program...");
     this.program = this.createShaderProgram();
-    console.log("[GPUTextureCache] ✅ Shader program created");
 
-    console.log("[GPUTextureCache] Creating vertex buffer...");
     this.vertexBuffer = this.createVertexBuffer();
-    console.log("[GPUTextureCache] ✅ Vertex buffer created");
 
     // Get attribute and uniform locations
     this.positionLocation = this.gl.getAttribLocation(this.program, "a_position");
     this.texCoordLocation = this.gl.getAttribLocation(this.program, "a_texCoord");
     this.textureLocation = this.gl.getUniformLocation(this.program, "u_texture");
-
-    console.log("[GPUTextureCache] Attribute locations:", {
-      position: this.positionLocation,
-      texCoord: this.texCoordLocation,
-      texture: this.textureLocation !== null,
-    });
   }
 
   /**
    * Upload RGBA bytes to GPU texture (once)
    * Returns texture key for reuse
    */
-  uploadTexture(key: string, rgbaBytes: Uint8Array, width: number, height: number): string {
+  uploadTexture(key: string, source: Uint8Array | ImageBitmap | ImageData | HTMLVideoElement | HTMLCanvasElement, width: number, height: number): string {
     // Check if texture already exists
     if (this.textures.has(key)) {
-      console.log(`[GPUTextureCache] Texture ${key} already uploaded, reusing`);
       return key;
     }
 
@@ -114,18 +90,29 @@ export class GPUTextureCache {
 
     this.gl.bindTexture(this.gl.TEXTURE_2D, texture);
 
-    // Upload RGBA data directly to GPU
-    this.gl.texImage2D(
-      this.gl.TEXTURE_2D,
-      0, // mip level
-      this.gl.RGBA, // internal format
-      width,
-      height,
-      0, // border
-      this.gl.RGBA, // format
-      this.gl.UNSIGNED_BYTE, // type
-      rgbaBytes, // pixel data
-    );
+    // Upload data to GPU
+    if (source instanceof Uint8Array) {
+      this.gl.texImage2D(
+        this.gl.TEXTURE_2D,
+        0, // mip level
+        this.gl.RGBA, // internal format
+        width,
+        height,
+        0, // border
+        this.gl.RGBA, // format
+        this.gl.UNSIGNED_BYTE, // type
+        source, // pixel data
+      );
+    } else {
+      this.gl.texImage2D(
+        this.gl.TEXTURE_2D,
+        0, // mip level
+        this.gl.RGBA, // internal format
+        this.gl.RGBA, // format
+        this.gl.UNSIGNED_BYTE, // type
+        source, // ImageBitmap | ImageData | etc
+      );
+    }
 
     // Set texture parameters (no mipmaps for thumbnails)
     this.gl.texParameteri(this.gl.TEXTURE_2D, this.gl.TEXTURE_MIN_FILTER, this.gl.LINEAR);
@@ -144,8 +131,6 @@ export class GPUTextureCache {
     });
 
     const uploadTime = performance.now() - startTime;
-    console.log(`[GPUTextureCache] Uploaded texture ${key} (${width}x${height}) in ${uploadTime.toFixed(2)}ms`);
-
     return key;
   }
 
@@ -284,7 +269,6 @@ export class GPUTextureCache {
       return;
     }
 
-    console.log(`[GPUTextureCache] Evicting textures: ${currentMemoryMB.toFixed(2)}MB > ${targetMemoryMB}MB`);
 
     // Sort by last used time (oldest first)
     const entries = Array.from(this.textureMetadata.entries()).sort((a, b) => a[1].lastUsed - b[1].lastUsed);
@@ -302,7 +286,6 @@ export class GPUTextureCache {
       }
     }
 
-    console.log(`[GPUTextureCache] Evicted ${evicted} textures, new size: ${this.getMemoryUsageMB().toFixed(2)}MB`);
   }
 
   /**
@@ -314,7 +297,6 @@ export class GPUTextureCache {
     }
     this.textures.clear();
     this.textureMetadata.clear();
-    console.log("[GPUTextureCache] Cleared all textures");
   }
 
   /**

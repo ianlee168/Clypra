@@ -58,14 +58,12 @@ export class GlobalGPUCacheManager {
    */
   initialize(canvas: HTMLCanvasElement, memoryLimitMB: number = 200): boolean {
     if (this.cache) {
-      console.warn("[GlobalGPUCache] Already initialized, skipping");
       return true;
     }
 
     try {
       this.cache = new GPUTextureCache(canvas);
       this.memoryLimitMB = memoryLimitMB;
-      console.log(`[GlobalGPUCache] Initialized with ${memoryLimitMB}MB memory limit`);
 
       // Start auto-eviction check (every 10 seconds)
       if (this.autoEvictionEnabled) {
@@ -74,7 +72,6 @@ export class GlobalGPUCacheManager {
 
       return true;
     } catch (err) {
-      console.error("[GlobalGPUCache] Failed to initialize:", err);
       return false;
     }
   }
@@ -142,8 +139,6 @@ export class GlobalGPUCacheManager {
       return 0; // No eviction needed
     }
 
-    console.log(`[GlobalGPUCache] Evicting non-viewport textures: ${currentMemoryMB.toFixed(2)}MB > ${this.memoryLimitMB}MB (viewport: ${viewportKeys.size} textures)`);
-
     // Get all texture metadata
     const allTextures = Array.from((this.cache as any).textureMetadata.entries()) as Array<[string, any]>;
 
@@ -190,8 +185,6 @@ export class GlobalGPUCacheManager {
     }
 
     const finalStats = this.cache.getStats();
-    console.log(`[GlobalGPUCache] Evicted ${evicted} textures, new size: ${finalStats.memoryMB}MB`);
-
     return evicted;
   }
 
@@ -214,8 +207,6 @@ export class GlobalGPUCacheManager {
         this.evictNonViewport();
       }
     }, 10000); // Check every 10 seconds
-
-    console.log("[GlobalGPUCache] Auto-eviction started (every 10s)");
   }
 
   /**
@@ -225,7 +216,6 @@ export class GlobalGPUCacheManager {
     if (this.evictionCheckInterval !== null) {
       window.clearInterval(this.evictionCheckInterval);
       this.evictionCheckInterval = null;
-      console.log("[GlobalGPUCache] Auto-eviction stopped");
     }
   }
 
@@ -234,7 +224,6 @@ export class GlobalGPUCacheManager {
    */
   setMemoryLimit(limitMB: number): void {
     this.memoryLimitMB = limitMB;
-    console.log(`[GlobalGPUCache] Memory limit set to ${limitMB}MB`);
 
     // Trigger eviction if over limit
     if (this.cache) {
@@ -285,8 +274,6 @@ export class GlobalGPUCacheManager {
     }
 
     this.viewports.clear();
-
-    console.log("[GlobalGPUCache] Disposed");
   }
 }
 

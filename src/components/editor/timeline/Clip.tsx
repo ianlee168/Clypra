@@ -44,14 +44,6 @@ const ClipInner: React.FC<ClipProps> = ({ clip, mediaAsset, pixelsPerSecond, sel
 
   // Handle pointer-based drag
   const handlePointerDown = (e: React.PointerEvent) => {
-    console.log("[CLIP] ⬇️ onPointerDown", {
-      clipId: clip.id,
-      button: e.button,
-      target: (e.target as HTMLElement).className,
-      locked,
-      isResizing,
-    });
-
     // Ignore if locked, resizing, or not left button
     if (locked || isResizing || e.button !== 0) return;
 
@@ -59,7 +51,6 @@ const ClipInner: React.FC<ClipProps> = ({ clip, mediaAsset, pixelsPerSecond, sel
     const target = e.target as HTMLElement;
     const isResizeHandle = target.closest('[data-testid*="resize"]');
     if (isResizeHandle) {
-      console.log("[CLIP] 🚫 Resize handle clicked - not dragging");
       return;
     }
 
@@ -99,22 +90,11 @@ const ClipInner: React.FC<ClipProps> = ({ clip, mediaAsset, pixelsPerSecond, sel
     const deltaX = e.clientX - dragStartRef.current.startX;
     const deltaY = e.clientY - dragStartRef.current.startY;
 
-    console.log("[CLIP] 🔄 Pointer move", {
-      clipId: clip.id,
-      deltaX,
-      deltaY,
-      clientX: e.clientX,
-      clientY: e.clientY,
-      hasMoved: dragStartRef.current.hasMoved,
-    });
-
     // Mark as moved if threshold exceeded
     if (!dragStartRef.current.hasMoved && (Math.abs(deltaX) > DRAG_THRESHOLD_PX || Math.abs(deltaY) > DRAG_THRESHOLD_PX)) {
       dragStartRef.current.hasMoved = true;
-      console.log("[CLIP] ✅ Movement threshold exceeded - starting drag");
       if (!dragStartRef.current.hasDragStarted) {
         dragStartRef.current.hasDragStarted = true;
-        console.log("[CLIP] 🚀 Drag START", { clipId: clip.id, startX: dragStartRef.current.startX, startY: dragStartRef.current.startY });
         onDragStart?.(clip.id, dragStartRef.current.startX, dragStartRef.current.startY);
       }
     }
@@ -126,8 +106,6 @@ const ClipInner: React.FC<ClipProps> = ({ clip, mediaAsset, pixelsPerSecond, sel
 
   const handlePointerUp = (e: React.PointerEvent) => {
     if (!dragStartRef.current) return;
-
-    console.log("[CLIP] 🏁 Drag END", { clipId: clip.id, hasMoved: dragStartRef.current.hasMoved });
 
     if (dragStartRef.current.hasDragStarted) {
       onDragEnd?.(clip.id);

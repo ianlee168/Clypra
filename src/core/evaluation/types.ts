@@ -281,6 +281,9 @@ export interface SceneMetadata {
 
   /** Timeline epoch (for cache invalidation) */
   readonly epochId?: string;
+
+  /** Hash of currently active media clips (for sync effect triggering) */
+  readonly activeMediaHash?: string;
 }
 
 /**

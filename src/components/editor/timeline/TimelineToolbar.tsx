@@ -25,7 +25,6 @@ export const TimelineToolbar: React.FC = () => {
   useSplitMode({
     enabled: splitMode,
     onSplit: (clipId, time) => {
-      console.log(`[TimelineToolbar] Split executed: ${clipId} at ${time.toFixed(2)}s`);
     },
     onMessage: (message) => {
       setToastMessage(message);
