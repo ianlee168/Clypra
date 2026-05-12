@@ -607,7 +607,16 @@ export const Timeline: React.FC = () => {
     const MIN_TIMELINE_DURATION = 10;
     const timelineDuration = Math.max(contentEnd, MIN_TIMELINE_DURATION);
     setDuration(timelineDuration);
-  }, [clips, getTimelineEndTime, setDuration]);
+
+    // ✅ CRITICAL: Clamp playhead if it's now beyond valid timeline bounds
+    // This handles the case where:
+    // - User deletes a long clip while playhead is near its end
+    // - Timeline duration shrinks
+    // - Playhead must snap to new timeline end (professional behavior)
+    if (currentTime > timelineDuration) {
+      seek(timelineDuration);
+    }
+  }, [clips, getTimelineEndTime, setDuration, currentTime, seek]);
 
   // Auto-scroll during playback: bulletproof viewport tracking with strict invariants
   useEffect(() => {
