@@ -51,6 +51,7 @@ jobs:
             libavcodec-dev \
             libavformat-dev \
             libavutil-dev \
+            libavfilter-dev \
             libswscale-dev \
             libswresample-dev \
             pkg-config \
@@ -70,9 +71,13 @@ jobs:
           workspaces: src-tauri
 
       - name: Run Rust tests
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig
         run: cd src-tauri && cargo test
 
       - name: Run Clippy
+        env:
+          PKG_CONFIG_PATH: /usr/lib/x86_64-linux-gnu/pkgconfig
         run: cd src-tauri && cargo clippy -- -D warnings
 
   build-check:
