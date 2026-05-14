@@ -9,6 +9,7 @@ import { usePlayback } from "@/hooks/usePlayback";
 import type { VideoMetadata } from "@/types";
 import { createClipFromAsset, getTimelineViewportEnd } from "@/lib/timelineClip";
 import { useRenderRuntime } from "@/hooks/useRenderRuntime";
+import { getActiveSessionOrNull } from "@/core/runtime/ProjectSession";
 import { TIMELINE_MAX_PPS, TIMELINE_MIN_PPS } from "@/lib/timelineZoom";
 import { suspendAutoSave, resumeAutoSave } from "@/store/middleware/autoSaveMiddleware";
 import { generateId } from "@/lib/id";
@@ -556,6 +557,8 @@ export const Timeline: React.FC = () => {
       // Exit source mode when clicking on timeline
       if (previewMode === "source") {
         exitSourceMode();
+        // Also switch transport authority back to program context
+        getActiveSessionOrNull()?.transportAuthority?.setActiveContext("program");
       }
 
       const container = containerRef.current;
