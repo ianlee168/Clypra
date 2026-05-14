@@ -1,5 +1,5 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, X, RotateCcw, Play } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useUIStore } from "../../store/uiStore";
 import { useTimelineStore } from "../../store/timelineStore";
@@ -33,6 +33,12 @@ export const SourcePreview: React.FC = () => {
     setGpuFailed(false);
   }, [sourceAsset?.id]); // Only depend on asset ID, not type
 
+  const handleSeek = useCallback((time: number) => {
+    if (videoRef.current) videoRef.current.currentTime = time;
+    if (audioRef.current) audioRef.current.currentTime = time;
+    setCurrentTime(time);
+  }, []);
+
   // Play/pause handler
   const handlePlayPause = useCallback(() => {
     if (useGPU) {
@@ -63,19 +69,72 @@ export const SourcePreview: React.FC = () => {
     }
   }, [useGPU, sourceAsset?.type, isPlaying]);
 
+  // Play marked region (In to Out)
+  const handlePlayMarkedRegion = useCallback(() => {
+    if (sourceInPoint === null || sourceOutPoint === null) return;
+
+    // Seek to In point
+    handleSeek(sourceInPoint);
+
+    // Start playback if not already playing
+    if (!isPlaying) {
+      handlePlayPause();
+    }
+  }, [sourceInPoint, sourceOutPoint, isPlaying, handleSeek, handlePlayPause]);
+
+  // Monitor playback and stop at Out point
+  useEffect(() => {
+    if (!isPlaying || sourceOutPoint === null) return;
+
+    const checkInterval = setInterval(() => {
+      if (currentTime >= sourceOutPoint) {
+        // Stop playback
+        if (videoRef.current) videoRef.current.pause();
+        if (audioRef.current) audioRef.current.pause();
+        setIsPlaying(false);
+      }
+    }, 50); // Check every 50ms
+
+    return () => clearInterval(checkInterval);
+  }, [isPlaying, currentTime, sourceOutPoint]);
+
+  // Clear In/Out points
+  const handleClearMarks = useCallback(() => {
+    markSourceIn(null);
+    markSourceOut(null);
+  }, [markSourceIn, markSourceOut]);
+
   // Handle space key for play/pause in source preview
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Only handle space key when in source preview mode
+      // Don't capture shortcuts when typing in input fields
+      const target = e.target as HTMLElement;
+      const isTyping = target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable;
+      if (isTyping) return;
+
+      // Space key for play/pause
       if (e.code === "Space") {
         e.preventDefault();
         handlePlayPause();
+        return;
+      }
+
+      // Arrow keys for seeking (1 second increments)
+      const seekAmount = 1.0; // 1 second
+      if (e.key === "ArrowLeft") {
+        e.preventDefault();
+        const newTime = Math.max(0, currentTime - seekAmount);
+        handleSeek(newTime);
+      } else if (e.key === "ArrowRight") {
+        e.preventDefault();
+        const newTime = Math.min(duration, currentTime + seekAmount);
+        handleSeek(newTime);
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [handlePlayPause]);
+  }, [handlePlayPause, currentTime, duration, handleSeek]);
 
   // Video event listeners (only for HTML5 video, not GPU preview)
   useEffect(() => {
@@ -121,12 +180,6 @@ export const SourcePreview: React.FC = () => {
     };
   }, [sourceAsset?.type]);
 
-  const handleSeek = useCallback((time: number) => {
-    if (videoRef.current) videoRef.current.currentTime = time;
-    if (audioRef.current) audioRef.current.currentTime = time;
-    setCurrentTime(time);
-  }, []);
-
   if (!sourceAsset) return null;
 
   const handleAddToTimeline = () => {
@@ -168,13 +221,18 @@ export const SourcePreview: React.FC = () => {
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}:${String(f).padStart(2, "0")}`;
   };
 
+  // Calculate marked duration
+  const markedDuration = sourceInPoint !== null && sourceOutPoint !== null ? sourceOutPoint - sourceInPoint : null;
+  const hasMarks = sourceInPoint !== null || sourceOutPoint !== null;
+  const hasCompleteMarks = sourceInPoint !== null && sourceOutPoint !== null;
+
   const sourcePath = convertFileSrc(sourceAsset.path);
   const mediaLabel = sourceAsset.type === "video" ? "video" : sourceAsset.type === "audio" ? "audio" : "image";
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-bg">
       {/* ── Header ─────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 h-10 shrink-0">
+      <div className="flex items-center justify-between px-4 h-10 shrink-0 border-b border-border/50">
         <div className="flex items-baseline gap-2">
           <span className="text-[13px] font-semibold text-text-primary tracking-tight">Previewing</span>
           <span className="text-[13px] text-text-muted">— {mediaLabel}</span>
@@ -183,6 +241,36 @@ export const SourcePreview: React.FC = () => {
           <X className="w-4 h-4" />
         </button>
       </div>
+
+      {/* ── Mark Info Bar ──────────────────────────────────────────── */}
+      {hasMarks && (
+        <div className="px-4 py-2 bg-surface/50 border-b border-border/30 flex items-center justify-between text-[11px]">
+          <div className="flex items-center gap-4">
+            {sourceInPoint !== null && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-text-muted">In:</span>
+                <span className="font-mono text-accent">{formatTC(sourceInPoint)}</span>
+              </div>
+            )}
+            {sourceOutPoint !== null && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-text-muted">Out:</span>
+                <span className="font-mono text-accent">{formatTC(sourceOutPoint)}</span>
+              </div>
+            )}
+            {hasCompleteMarks && markedDuration !== null && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-text-muted">Duration:</span>
+                <span className="font-mono text-text-primary font-semibold">{markedDuration.toFixed(2)}s</span>
+              </div>
+            )}
+          </div>
+          <button onClick={handleClearMarks} className="flex items-center gap-1 px-2 h-5 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Clear marks">
+            <RotateCcw className="w-3 h-3" />
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* ── Video Area ─────────────────────────────────────────────── */}
       <div className="flex-1 flex items-center justify-center overflow-hidden bg-[#06080a] relative">
@@ -231,14 +319,20 @@ export const SourcePreview: React.FC = () => {
         outPoint={sourceOutPoint}
         rightActions={
           <>
-            <button onClick={() => markSourceIn(currentTime)} className="px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Mark In (I)">
+            <button onClick={() => markSourceIn(currentTime)} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceInPoint !== null && Math.abs(currentTime - sourceInPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark In (I)">
               IN
             </button>
-            <button onClick={() => markSourceOut(currentTime)} className="px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Mark Out (O)">
+            <button onClick={() => markSourceOut(currentTime)} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceOutPoint !== null && Math.abs(currentTime - sourceOutPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark Out (O)">
               OUT
             </button>
+            {hasCompleteMarks && (
+              <button onClick={handlePlayMarkedRegion} className="flex items-center gap-1 px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors cursor-pointer" title="Play marked region">
+                <Play className="w-3 h-3" />
+                Play
+              </button>
+            )}
             <div className="w-px h-4 bg-white/10 mx-1" />
-            <button onClick={handleAddToTimeline} className="flex items-center gap-1 px-2.5 h-6 rounded bg-accent/90 hover:bg-accent text-white text-[10px] font-semibold transition-colors" title="Add to Timeline">
+            <button onClick={handleAddToTimeline} className="flex items-center gap-1 px-2.5 h-6 rounded bg-accent/90 hover:bg-accent text-white text-[10px] font-semibold transition-colors cursor-pointer" title={hasCompleteMarks ? `Add ${markedDuration?.toFixed(2)}s to Timeline` : "Add to Timeline"}>
               <Plus className="w-3 h-3" />
               Add
             </button>

@@ -58,8 +58,8 @@ interface UIStore {
   // Preview mode actions
   previewAsset: (asset: MediaAsset) => void;
   exitSourceMode: () => void;
-  markSourceIn: (time: number) => void;
-  markSourceOut: (time: number) => void;
+  markSourceIn: (time: number | null) => void;
+  markSourceOut: (time: number | null) => void;
 }
 
 export const useUIStore = create<UIStore>((set, get) => ({
