@@ -4,7 +4,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 
 // @ts-ignore - react-dnd types issue
 import { useDrag } from "react-dnd";
-import { Film, Image, Plus } from "lucide-react";
+import { Film, Plus } from "lucide-react";
 
 import { useUIStore } from "@/store/uiStore";
 import { formatTime } from "@/lib/timeFormatting";
@@ -45,7 +45,17 @@ export const MediaCard: React.FC<MediaCardProps> = ({ asset, isSelected, isUsedI
   return (
     <div ref={drag as unknown as React.Ref<HTMLDivElement>} onClick={handleClick} onContextMenu={onContextMenu} className={`group relative bg-surface-raised rounded overflow-hidden transition-all cursor-pointer ${isDragging ? "opacity-50" : ""} ${isSelected ? "ring-1 ring-accent" : ""}`}>
       <div className="aspect-video bg-surface-raised flex items-center justify-center relative">
-        {asset.type === "video" && asset.posterFrame && !/\.(mp4|mov|avi|mkv|webm|flv)(%|$)/i.test(asset.posterFrame) ? <img src={asset.posterFrame} alt={asset.name} className="w-full h-full object-contain" /> : asset.type === "audio" ? <MediaCardWaveform audioPath={asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path)} duration={asset.duration} className="w-full h-full" /> : <div className="w-8 h-8">{asset.type === "video" ? <Film className="w-full h-full text-text-muted" /> : <Image className="w-full h-full text-text-muted" />}</div>}
+        {asset.type === "video" && asset.posterFrame && !/\.(mp4|mov|avi|mkv|webm|flv)(%|$)/i.test(asset.posterFrame) ? (
+          <img src={asset.posterFrame} alt={asset.name} className="w-full h-full object-contain" />
+        ) : asset.type === "audio" ? (
+          <MediaCardWaveform audioPath={asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path)} duration={asset.duration} className="w-full h-full" />
+        ) : asset.type === "image" ? (
+          <img src={asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path)} alt={asset.name} className="w-full h-full object-contain" />
+        ) : (
+          <div className="w-8 h-8">
+            <Film className="w-full h-full text-text-muted" />
+          </div>
+        )}
         {asset.duration > 0 && <div className="absolute top-1 left-1 bg-black/70 px-1.5 py-0.5 rounded text-[10px] text-white">{formatTime(asset.duration)}</div>}
         {/* "Added" badge */}
         {isUsedInTimeline && (
