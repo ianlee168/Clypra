@@ -1,12 +1,12 @@
 import React, { useState, lazy, Suspense } from "react";
 import { Film, Upload, Home, Settings, Camera } from "lucide-react";
 import { Button } from "../ui/Button";
-import { usePlayback } from "../../hooks/usePlayback";
-import { useProjectStore } from "../../store/projectStore";
-import { useUIStore } from "../../store/uiStore";
-import { useTimelineStore } from "../../store/timelineStore";
-import { useHistoryStore } from "../../store/historyStore";
-import { exportFrameAndDownload } from "../../lib/exportFrame";
+import { usePlayback } from "@/hooks/usePlayback";
+import { useProjectStore } from "@/store/projectStore";
+import { useUIStore } from "@/store/uiStore";
+import { useTimelineStore } from "@/store/timelineStore";
+import { useHistoryStore } from "@/store/historyStore";
+import { exportFrameAndDownload } from "@/lib/exportFrame";
 import { useTauriFullscreen } from "@/hooks/useTauriFullscreen";
 
 // Lazy load ExportDialog (code splitting)
@@ -56,7 +56,9 @@ export const TopBar: React.FC = () => {
           </Button>
           <div className="w-px h-5 bg-border/50" />
           <Film className="w-4 h-4 text-accent-soft" />
-          <span className="text-xs font-semibold text-text-primary">{project?.name}</span>
+          <span className="text-xs font-semibold text-text-primary truncate max-w-[200px]" title={project?.name}>
+            {project?.name}
+          </span>
         </div>
 
         {/* Center - timecode */}

@@ -1,10 +1,12 @@
 import React, { useRef, useState, useEffect, useCallback } from "react";
-import { Plus, X } from "lucide-react";
+import { Plus, X, RotateCcw, Play } from "lucide-react";
 import { convertFileSrc } from "@tauri-apps/api/core";
-import { useUIStore } from "../../store/uiStore";
-import { useTimelineStore } from "../../store/timelineStore";
-import { useProjectStore } from "../../store/projectStore";
-import { createClipFromAsset } from "../../lib/timelineClip";
+import { useUIStore } from "@/store/uiStore";
+import { useTimelineStore } from "@/store/timelineStore";
+import { useProjectStore } from "@/store/projectStore";
+import { createClipFromAsset } from "@/lib/timelineClip";
+import { getActiveSessionOrNull } from "@/core/runtime/ProjectSession";
+import type { SourcePlaybackContext } from "@/core/playback";
 import { GPUPreview } from "./GPUPreview";
 import { AudioWaveform } from "./AudioWaveform";
 import { PreviewTransport } from "./PreviewTransport";
@@ -24,95 +26,87 @@ export const SourcePreview: React.FC = () => {
   const [duration, setDuration] = useState(0);
   const [useGPU, setUseGPU] = useState(USE_GPU_PREVIEW && sourceAsset?.type === "video");
   const [gpuFailed, setGpuFailed] = useState(false);
+  const sourceCtxRef = useRef<SourcePlaybackContext | null>(null);
+
+  // Get source context from active session and bind media element
+  useEffect(() => {
+    const session = getActiveSessionOrNull();
+    const ctx = session?.sourceContext;
+    if (!ctx) return;
+
+    sourceCtxRef.current = ctx;
+
+    // Bind appropriate media element
+    if (sourceAsset?.type === "audio" && audioRef.current) {
+      ctx.setMediaElement(audioRef.current);
+    } else if (sourceAsset?.type === "video" && videoRef.current && !useGPU) {
+      ctx.setMediaElement(videoRef.current);
+    } else {
+      ctx.setMediaElement(null);
+    }
+
+    // Subscribe to context state
+    const unsub = ctx.subscribe((snapshot) => {
+      setCurrentTime(snapshot.time);
+      setDuration(snapshot.duration);
+      setIsPlaying(snapshot.state === "playing");
+    });
+
+    return () => {
+      unsub();
+      ctx.setMediaElement(null);
+      sourceCtxRef.current = null;
+    };
+  }, [sourceAsset?.id, sourceAsset?.type, useGPU]);
 
   // Reset when asset changes
   useEffect(() => {
-    setCurrentTime(0);
-    setIsPlaying(false);
     setUseGPU(USE_GPU_PREVIEW && sourceAsset?.type === "video");
     setGpuFailed(false);
-  }, [sourceAsset?.id]); // Only depend on asset ID, not type
-
-  // Video event listeners (only for HTML5 video, not GPU preview)
-  useEffect(() => {
-    if (useGPU) return; // Skip if using GPU preview
-
-    const video = videoRef.current;
-    if (!video) return;
-
-    const handleTimeUpdate = () => setCurrentTime(video.currentTime);
-    const handleLoadedMetadata = () => setDuration(video.duration);
-    const handleEnded = () => setIsPlaying(false);
-
-    video.addEventListener("timeupdate", handleTimeUpdate);
-    video.addEventListener("loadedmetadata", handleLoadedMetadata);
-    video.addEventListener("ended", handleEnded);
-
-    return () => {
-      video.removeEventListener("timeupdate", handleTimeUpdate);
-      video.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      video.removeEventListener("ended", handleEnded);
-    };
-  }, [useGPU]);
-
-  // Audio event listeners
-  useEffect(() => {
-    if (sourceAsset?.type !== "audio") return;
-
-    const audio = audioRef.current;
-    if (!audio) return;
-
-    const handleTimeUpdate = () => setCurrentTime(audio.currentTime);
-    const handleLoadedMetadata = () => setDuration(audio.duration);
-    const handleEnded = () => setIsPlaying(false);
-
-    audio.addEventListener("timeupdate", handleTimeUpdate);
-    audio.addEventListener("loadedmetadata", handleLoadedMetadata);
-    audio.addEventListener("ended", handleEnded);
-
-    return () => {
-      audio.removeEventListener("timeupdate", handleTimeUpdate);
-      audio.removeEventListener("loadedmetadata", handleLoadedMetadata);
-      audio.removeEventListener("ended", handleEnded);
-    };
-  }, [sourceAsset?.type]);
+  }, [sourceAsset?.id]);
 
   const handleSeek = useCallback((time: number) => {
-    if (videoRef.current) videoRef.current.currentTime = time;
-    if (audioRef.current) audioRef.current.currentTime = time;
-    setCurrentTime(time);
+    sourceCtxRef.current?.seek(time);
   }, []);
 
-  if (!sourceAsset) return null;
-
-  const handlePlayPause = () => {
+  const handlePlayPause = useCallback(() => {
+    const ctx = sourceCtxRef.current;
+    if (!ctx) return;
     if (useGPU) {
-      // GPU preview: just toggle state, GPUPreview handles playback
-      setIsPlaying(!isPlaying);
-    } else if (sourceAsset.type === "audio") {
-      // Audio: control audio element
-      const audio = audioRef.current;
-      if (!audio) return;
-      if (isPlaying) {
-        audio.pause();
-        setIsPlaying(false);
-      } else {
-        audio.play();
-        setIsPlaying(true);
-      }
+      setIsPlaying((prev) => !prev);
     } else {
-      // HTML5 video: control video element
-      const video = videoRef.current;
-      if (!video) return;
-      if (isPlaying) {
-        video.pause();
-        setIsPlaying(false);
+      const state = ctx.getState();
+      if (state === "playing") {
+        ctx.pause();
       } else {
-        video.play();
-        setIsPlaying(true);
+        ctx.play();
       }
     }
-  };
+  }, [useGPU]);
+
+  const handlePlayMarkedRegion = useCallback(() => {
+    sourceCtxRef.current?.playMarkedRegion();
+  }, []);
+
+  const handleClearMarks = useCallback(() => {
+    markSourceIn(null);
+    markSourceOut(null);
+    sourceCtxRef.current?.clearMarks();
+  }, [markSourceIn, markSourceOut]);
+
+  const handleMarkIn = useCallback(() => {
+    const t = sourceCtxRef.current?.getTime() ?? 0;
+    markSourceIn(t);
+    sourceCtxRef.current?.setInPoint(t);
+  }, [markSourceIn]);
+
+  const handleMarkOut = useCallback(() => {
+    const t = sourceCtxRef.current?.getTime() ?? 0;
+    markSourceOut(t);
+    sourceCtxRef.current?.setOutPoint(t);
+  }, [markSourceOut]);
+
+  if (!sourceAsset) return null;
 
   const handleAddToTimeline = () => {
     if (!project) return;
@@ -142,6 +136,10 @@ export const SourcePreview: React.FC = () => {
 
     addClip(newClip);
     exitSourceMode();
+
+    // Switch transport authority back to program context
+    const session = getActiveSessionOrNull();
+    session?.transportAuthority?.setActiveContext("program");
   };
 
   /** Format time as HH:MM:SS:FF (frame-accurate) */
@@ -153,21 +151,64 @@ export const SourcePreview: React.FC = () => {
     return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}:${String(f).padStart(2, "0")}`;
   };
 
+  // Calculate marked duration
+  const markedDuration = sourceInPoint !== null && sourceOutPoint !== null ? sourceOutPoint - sourceInPoint : null;
+  const hasMarks = sourceInPoint !== null || sourceOutPoint !== null;
+  const hasCompleteMarks = sourceInPoint !== null && sourceOutPoint !== null;
+
   const sourcePath = convertFileSrc(sourceAsset.path);
   const mediaLabel = sourceAsset.type === "video" ? "video" : sourceAsset.type === "audio" ? "audio" : "image";
 
   return (
     <div className="flex-1 flex flex-col min-h-0 bg-bg">
       {/* ── Header ─────────────────────────────────────────────────── */}
-      <div className="flex items-center justify-between px-4 h-10 shrink-0">
+      <div className="flex items-center justify-between px-4 h-10 shrink-0 border-b border-border/50">
         <div className="flex items-baseline gap-2">
           <span className="text-[13px] font-semibold text-text-primary tracking-tight">Previewing</span>
           <span className="text-[13px] text-text-muted">— {mediaLabel}</span>
         </div>
-        <button onClick={exitSourceMode} className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/6 transition-colors text-text-muted hover:text-text-primary" title="Close (Esc)">
+        <button
+          onClick={() => {
+            exitSourceMode();
+            const session = getActiveSessionOrNull();
+            session?.transportAuthority?.setActiveContext("program");
+          }}
+          className="w-7 h-7 flex items-center justify-center rounded hover:bg-white/6 transition-colors text-text-muted hover:text-text-primary"
+          title="Close (Esc)"
+        >
           <X className="w-4 h-4" />
         </button>
       </div>
+
+      {/* ── Mark Info Bar ──────────────────────────────────────────── */}
+      {hasMarks && (
+        <div className="px-4 py-2 bg-surface/50 border-b border-border/30 flex items-center justify-between text-[11px]">
+          <div className="flex items-center gap-4">
+            {sourceInPoint !== null && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-text-muted">In:</span>
+                <span className="font-mono text-accent">{formatTC(sourceInPoint)}</span>
+              </div>
+            )}
+            {sourceOutPoint !== null && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-text-muted">Out:</span>
+                <span className="font-mono text-accent">{formatTC(sourceOutPoint)}</span>
+              </div>
+            )}
+            {hasCompleteMarks && markedDuration !== null && (
+              <div className="flex items-center gap-1.5">
+                <span className="text-text-muted">Duration:</span>
+                <span className="font-mono text-text-primary font-semibold">{markedDuration.toFixed(2)}s</span>
+              </div>
+            )}
+          </div>
+          <button onClick={handleClearMarks} className="flex items-center gap-1 px-2 h-5 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Clear marks">
+            <RotateCcw className="w-3 h-3" />
+            Clear
+          </button>
+        </div>
+      )}
 
       {/* ── Video Area ─────────────────────────────────────────────── */}
       <div className="flex-1 flex items-center justify-center overflow-hidden bg-[#06080a] relative">
@@ -216,14 +257,20 @@ export const SourcePreview: React.FC = () => {
         outPoint={sourceOutPoint}
         rightActions={
           <>
-            <button onClick={() => markSourceIn(currentTime)} className="px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Mark In (I)">
+            <button onClick={handleMarkIn} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceInPoint !== null && Math.abs(currentTime - sourceInPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark In (I)">
               IN
             </button>
-            <button onClick={() => markSourceOut(currentTime)} className="px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Mark Out (O)">
+            <button onClick={handleMarkOut} className={`px-2 h-6 rounded text-[10px] font-medium transition-colors cursor-pointer ${sourceOutPoint !== null && Math.abs(currentTime - sourceOutPoint) < 0.1 ? "bg-accent text-white" : "text-text-muted hover:text-text-primary hover:bg-white/6"}`} title="Mark Out (O)">
               OUT
             </button>
+            {hasCompleteMarks && (
+              <button onClick={handlePlayMarkedRegion} className="flex items-center gap-1 px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors cursor-pointer" title="Play marked region">
+                <Play className="w-3 h-3" />
+                Play
+              </button>
+            )}
             <div className="w-px h-4 bg-white/10 mx-1" />
-            <button onClick={handleAddToTimeline} className="flex items-center gap-1 px-2.5 h-6 rounded bg-accent/90 hover:bg-accent text-white text-[10px] font-semibold transition-colors" title="Add to Timeline">
+            <button onClick={handleAddToTimeline} disabled={!hasCompleteMarks} className={`flex items-center gap-1 px-2.5 h-6 rounded text-[10px] font-semibold transition-colors ${hasCompleteMarks ? "bg-green-600/90 hover:bg-green-600 text-white cursor-pointer" : "bg-text-muted/70 hover:bg-text-muted/90 text-white cursor-not-allowed"}`} title={hasCompleteMarks ? `Add ${markedDuration?.toFixed(2)}s to Timeline` : "Add to Timeline"}>
               <Plus className="w-3 h-3" />
               Add
             </button>

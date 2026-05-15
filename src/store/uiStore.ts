@@ -27,7 +27,6 @@
 
 import { create } from "zustand";
 import type { MediaAsset } from "@/types";
-import { getPlaybackClock } from "@/hooks/usePlaybackClock";
 
 interface UIStore {
   selectedClipIds: string[]; // Multi-select support
@@ -58,8 +57,8 @@ interface UIStore {
   // Preview mode actions
   previewAsset: (asset: MediaAsset) => void;
   exitSourceMode: () => void;
-  markSourceIn: (time: number) => void;
-  markSourceOut: (time: number) => void;
+  markSourceIn: (time: number | null) => void;
+  markSourceOut: (time: number | null) => void;
 }
 
 export const useUIStore = create<UIStore>((set, get) => ({
@@ -125,22 +124,16 @@ export const useUIStore = create<UIStore>((set, get) => ({
   },
 
   // Preview mode actions
+  // NOTE: Transport context switching (program ↔ source) is handled
+  // by the consuming component via session.transportAuthority.setActiveContext().
+  // This store only manages UI state (which panel is shown, in/out points).
   previewAsset: (asset) => {
-    // Get playback clock state
-    const clock = getPlaybackClock();
-    const isPlaying = clock.state === "playing";
-
-    // Pause timeline if playing before switching to source mode
-    if (isPlaying) {
-      clock.pause();
-    }
-
     set({
       previewMode: "source",
       sourceAsset: asset,
       sourceInPoint: null,
       sourceOutPoint: null,
-      previewMediaId: asset.id, // Keep selection in sync
+      previewMediaId: asset.id,
     });
   },
 
@@ -150,6 +143,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
       sourceAsset: null,
       sourceInPoint: null,
       sourceOutPoint: null,
+      previewMediaId: null,
     });
   },
 

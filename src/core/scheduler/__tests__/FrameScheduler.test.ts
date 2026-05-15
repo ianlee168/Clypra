@@ -6,7 +6,7 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { FrameScheduler } from "../FrameScheduler";
-import type { FrameRequest } from "../../resources/types";
+import { FrameRequest } from "@/core/resources";
 
 // Mock dependencies
 vi.mock("../../evaluation/evaluator", () => ({

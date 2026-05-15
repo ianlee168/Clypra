@@ -1,12 +1,30 @@
+/**
+ * Resolve aspect ratio for "Original" preview mode.
+ *
+ * IMPORTANT: In professional NLEs, "Original" means the SEQUENCE aspect ratio,
+ * NOT the source media aspect ratio. The sequence defines the render universe.
+ *
+ * The program monitor always visualizes sequence space, never adapts to clips.
+ * This maintains stability for:
+ * - Overlays and graphics
+ * - Text positioning
+ * - Motion graphics
+ * - Transitions
+ * - Export consistency
+ *
+ * If users want to see source media aspect ratio, they should use Source Preview mode.
+ */
+
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronDown, Expand, Shrink, Volume2, VolumeX } from "lucide-react";
-import { usePlaybackClock, usePlaybackControls, getPlaybackClock } from "@/hooks/usePlaybackClock";
+import { usePlaybackClock, usePlaybackControls, useTransportControls, getPlaybackClock } from "@/hooks/usePlaybackClock";
 import { useProjectStore } from "@/store/projectStore";
 import { useTimelineStore } from "@/store/timelineStore";
 import { useUIStore } from "@/store/uiStore";
 import { evaluateSceneCached } from "@/core/evaluation/evaluator";
 import { getFrameScheduler } from "@/core/scheduler/FrameScheduler";
 import { getActiveSessionOrNull } from "@/core/runtime/ProjectSession";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import { SourcePreview } from "./SourcePreview";
 import { PreviewTransport } from "./PreviewTransport";
 import { GPUTextureCache } from "@/lib/gpuTextureCache";
@@ -14,18 +32,7 @@ import { cn } from "@/lib/utils";
 import type { EvaluatedMediaLayer } from "@/core/evaluation/types";
 import { AspectRatio, PREVIEW_ASPECT_LABEL } from "@/types";
 import { AspectMenuRow } from "../ui/AspectRatio";
-
-/** Format time in seconds to MM:SS or HH:MM:SS */
-function formatTime(seconds: number): string {
-  const hours = Math.floor(seconds / 3600);
-  const minutes = Math.floor((seconds % 3600) / 60);
-  const secs = Math.floor(seconds % 60);
-
-  if (hours > 0) {
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-  }
-  return `${String(minutes).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-}
+import { formatTime } from "@/lib/timeFormatting";
 
 const PREVIEW_ASPECT_RATIO: Record<AspectRatio, number | null> = {
   original: null, // Uses project canvas
@@ -51,22 +58,6 @@ function previewAspectWidthOverHeight(preset: AspectRatio, canvasWidth: number, 
   return PREVIEW_ASPECT_RATIO[preset] ?? canvasWidth / ch;
 }
 
-/**
- * Resolve aspect ratio for "Original" preview mode.
- *
- * IMPORTANT: In professional NLEs, "Original" means the SEQUENCE aspect ratio,
- * NOT the source media aspect ratio. The sequence defines the render universe.
- *
- * The program monitor always visualizes sequence space, never adapts to clips.
- * This maintains stability for:
- * - Overlays and graphics
- * - Text positioning
- * - Motion graphics
- * - Transitions
- * - Export consistency
- *
- * If users want to see source media aspect ratio, they should use Source Preview mode.
- */
 function resolveOriginalPreviewAspect(layers: readonly { mediaId: string }[], mediaAssets: Array<{ id: string; width?: number; height?: number }>, canvasWidth: number, canvasHeight: number): number {
   // Always return sequence aspect ratio
   // The sequence is the coordinate universe - it doesn't change based on clips
@@ -116,6 +107,7 @@ const ProgramPreview: React.FC = () => {
   // Imperative clock (throttled UI snapshots, 10fps)
   const clockState = usePlaybackClock();
   const { play, pause, seek, setSpeed, setDuration, setFrameRate } = usePlaybackControls();
+  const { play: transportPlay, pause: transportPause, seek: transportSeek, setActiveContext } = useTransportControls();
   const clock = getPlaybackClock();
 
   const project = useProjectStore((s) => s.project);
@@ -273,6 +265,15 @@ const ProgramPreview: React.FC = () => {
 
   // Scene evaluation (for UI and initial render)
   const scene = useMemo(() => evaluateSceneCached(clockState.time, clips, tracks, mediaAssets, project ?? null, epoch), [tracks, clips, mediaAssets, clockState.time, project, epoch]);
+
+  // Video element management - separate from scene time updates
+  // Create/destroy video elements based on clip composition only, not playback time
+  const videoClips = useMemo(() => {
+    return clips.filter((clip) => {
+      const asset = mediaAssets.find((a) => a.id === clip.mediaId);
+      return asset?.type === "video";
+    });
+  }, [clips, mediaAssets]);
 
   // Calculate display dimensions for canvas
   const canvasWidth = project?.canvasWidth ?? 1920;
@@ -470,62 +471,41 @@ const ProgramPreview: React.FC = () => {
     };
   }, [useCanvasPreview, clips, tracks, mediaAssets, project, epoch, clock, displayWidth, displayHeight]);
 
-  // Create/destroy video elements (only when scene changes)
+  // Cleanup video elements on component unmount only
   useEffect(() => {
-    const currentVideoKeys = new Set<string>();
-
-    // Register video elements with session
-    Object.values(videoRefs.current).forEach((video) => {
-      if (!video) return;
-
-      const session = getActiveSessionOrNull();
-
-      if (session && session.state === "active") {
-        const clipId = video.dataset.clipId;
-        const mediaId = video.dataset.mediaId;
-        if (clipId && mediaId) {
-          const key = `${clipId}-${mediaId}`;
-          session.registerVideoElement(key, video);
-          currentVideoKeys.add(key);
-        }
-      }
-    });
-
-    // Cleanup: ONLY on unmount or when scene changes
     return () => {
       const session = getActiveSessionOrNull();
-      if (session) {
-        currentVideoKeys.forEach((key) => {
-          session.unregisterVideoElement(key);
-        });
-      }
-
-      // Only cleanup videos that are no longer in the scene
       Object.entries(videoRefs.current).forEach(([key, video]) => {
         if (!video) return;
-        const clipId = video.dataset.clipId;
-        const mediaId = video.dataset.mediaId;
-        const videoKey = `${clipId}-${mediaId}`;
-
-        // Only cleanup if this video is not in current scene
-        const stillInScene = scene.visualLayers.some((l) => l.layerType === "media" && l.clipId === clipId && l.mediaId === mediaId);
-
-        if (!stillInScene) {
-          video.pause();
-          video.src = "";
-          video.load();
-          delete videoRefs.current[key];
-        }
+        session?.unregisterVideoElement(key);
+        video.pause();
+        video.src = "";
+        video.load();
       });
+      videoRefs.current = {};
     };
-  }, [scene.metadata.activeMediaHash]); // Only re-run when scene content changes
+  }, []);
 
   // Sync video playback state (doesn't touch src)
   useEffect(() => {
     const currentClockTime = clock.time;
 
+    console.log(`[PreviewPanel] Sync video playback - clockState: ${clockState.state}, time: ${currentClockTime.toFixed(3)}s, videos: ${Object.keys(videoRefs.current).length}`);
+
     Object.values(videoRefs.current).forEach((video) => {
       if (!video) return;
+
+      const clipId = video.dataset.clipId;
+      const mediaId = video.dataset.mediaId;
+      const videoKey = `${clipId}-${mediaId}`;
+
+      // Skip if video has no source or isn't ready
+      if (!video.src || video.readyState < 2) {
+        console.log(`[PreviewPanel] Video ${videoKey} not ready - src: ${!!video.src}, readyState: ${video.readyState}`);
+        return;
+      }
+
+      console.log(`[PreviewPanel] Video ${videoKey} - readyState: ${video.readyState}, duration: ${video.duration.toFixed(2)}s, paused: ${video.paused}, currentTime: ${video.currentTime.toFixed(3)}s`);
 
       // Audio settings
       video.muted = isMuted || volume === 0;
@@ -534,7 +514,6 @@ const ProgramPreview: React.FC = () => {
 
       // Set initial time when starting playback or when paused
       if (Number.isFinite(video.duration) && video.duration > 0) {
-        const clipId = video.dataset.clipId;
         const clip = clips.find((c) => c.id === clipId);
 
         if (clip) {
@@ -544,8 +523,10 @@ const ProgramPreview: React.FC = () => {
           const targetTime = Math.max(0, Math.min(sourceTime, Math.max(0, video.duration - 0.01)));
 
           if (clockState.state !== "playing") {
+            console.log(`[PreviewPanel] Video ${videoKey} - seeking to ${targetTime.toFixed(3)}s (paused)`);
             video.currentTime = targetTime;
           } else if (video.paused) {
+            console.log(`[PreviewPanel] Video ${videoKey} - seeking to ${targetTime.toFixed(3)}s (before play)`);
             video.currentTime = targetTime;
           }
         }
@@ -554,18 +535,28 @@ const ProgramPreview: React.FC = () => {
       // Play/pause based on clock state
       if (clockState.state === "playing") {
         if (video.paused) {
-          // Remove readyState check - let browser queue the play
-          const playPromise = video.play();
-          if (playPromise !== undefined) {
-            playPromise.catch((err) => {
-              if (err.name !== "AbortError") {
-                console.warn("video.play() failed:", err);
-              }
-            });
+          // Only try to play if video is ready
+          if (video.readyState >= 3) {
+            console.log(`[PreviewPanel] Video ${videoKey} - calling play() (readyState: ${video.readyState})`);
+            const playPromise = video.play();
+            if (playPromise !== undefined) {
+              playPromise
+                .then(() => {
+                  console.log(`[PreviewPanel] Video ${videoKey} - play() succeeded`);
+                })
+                .catch((err) => {
+                  if (err.name !== "AbortError") {
+                    console.warn(`[PreviewPanel] Video ${videoKey} - play() failed:`, err);
+                  }
+                });
+            }
+          } else {
+            console.log(`[PreviewPanel] Video ${videoKey} - skipping play(), readyState: ${video.readyState} (need >= 3)`);
           }
         }
       } else {
         if (!video.paused) {
+          console.log(`[PreviewPanel] Video ${videoKey} - calling pause()`);
           video.pause();
         }
       }
@@ -726,28 +717,55 @@ const ProgramPreview: React.FC = () => {
                 {/* Hidden video elements for audio/video sync (ENGINE CLOCK IS MASTER). 
                     CRITICAL: Do NOT use width: 0, height: 0, or opacity: 0. 
                     Browsers throttle decoding for invisible videos, destroying A/V sync.
-                    Keep them 1x1 pixel with near-zero opacity to force hardware decoding. */}
+                    Keep them 1x1 pixel with near-zero opacity to force hardware decoding. 
+                    
+                    ARCHITECTURE: Video elements are keyed by clip+media ID and persist across time updates.
+                    They are only created/destroyed when clips are added/removed, not on every frame. */}
                 <div className="absolute top-0 left-0 pointer-events-none -z-10" style={{ width: "16px", height: "16px", opacity: 0.01, visibility: "hidden", overflow: "hidden" }}>
-                  {scene.visualLayers
-                    .filter((l): l is EvaluatedMediaLayer => l.layerType === "media" && l.mediaType === "video")
-                    .map((layer) => {
-                      return (
-                        <video
-                          key={`audio-${layer.clipId}-${layer.mediaId}`}
-                          data-media-id={layer.mediaId}
-                          data-clip-id={layer.clipId}
-                          ref={(el) => {
-                            videoRefs.current[`${layer.clipId}-${layer.mediaId}`] = el;
-                          }}
-                          src={layer.sourcePath}
-                          muted={isMuted || volume === 0}
-                          playsInline
-                          preload="auto"
-                          onLoadedMetadata={() => setPreviewVideoReadyTick((n) => n + 1)}
-                          className="w-full h-full"
-                        />
-                      );
-                    })}
+                  {videoClips.map((clip) => {
+                    const asset = mediaAssets.find((a) => a.id === clip.mediaId);
+                    if (!asset) return null;
+                    const sourcePath = asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path);
+
+                    return (
+                      <video
+                        key={`${clip.id}-${clip.mediaId}`}
+                        data-media-id={clip.mediaId}
+                        data-clip-id={clip.id}
+                        ref={(el) => {
+                          const key = `${clip.id}-${clip.mediaId}`;
+                          const session = getActiveSessionOrNull();
+                          if (el) {
+                            videoRefs.current[key] = el;
+                            session?.registerVideoElement(key, el);
+                          } else if (videoRefs.current[key]) {
+                            session?.unregisterVideoElement(key);
+                            delete videoRefs.current[key];
+                          }
+                        }}
+                        src={sourcePath}
+                        muted={isMuted || volume === 0}
+                        playsInline
+                        preload="auto"
+                        onLoadedMetadata={(e) => {
+                          const video = e.currentTarget;
+                          const key = `${clip.id}-${clip.mediaId}`;
+                          console.log(`[PreviewPanel] Video metadata loaded - ${key}, duration: ${video.duration.toFixed(2)}s, readyState: ${video.readyState}`);
+                          setPreviewVideoReadyTick((n) => n + 1);
+                        }}
+                        onCanPlay={(e) => {
+                          const video = e.currentTarget;
+                          const key = `${clip.id}-${clip.mediaId}`;
+                          console.log(`[PreviewPanel] Video canPlay - ${key}, readyState: ${video.readyState}`);
+                        }}
+                        onError={(e) => {
+                          const key = `${clip.id}-${clip.mediaId}`;
+                          console.error(`[PreviewPanel] Video error - ${key}:`, e.currentTarget.error);
+                        }}
+                        className="w-full h-full"
+                      />
+                    );
+                  })}
                 </div>
               </>
             ) : (
@@ -820,12 +838,26 @@ const ProgramPreview: React.FC = () => {
                             data-clip-id={layer.clipId}
                             ref={(el) => {
                               videoRefs.current[`${layer.clipId}-${layer.mediaId}`] = el;
+                              if (el) {
+                                console.log(`[PreviewPanel] Video element created (visual) - ${layer.clipId}-${layer.mediaId}, src: ${layer.sourcePath}`);
+                              }
                             }}
                             src={layer.sourcePath}
                             muted={isMuted || volume === 0}
                             playsInline
                             preload="auto"
-                            onLoadedMetadata={() => setPreviewVideoReadyTick((n) => n + 1)}
+                            onLoadedMetadata={(e) => {
+                              const video = e.currentTarget;
+                              console.log(`[PreviewPanel] Video metadata loaded (visual) - ${layer.clipId}-${layer.mediaId}, duration: ${video.duration.toFixed(2)}s, readyState: ${video.readyState}`);
+                              setPreviewVideoReadyTick((n) => n + 1);
+                            }}
+                            onCanPlay={(e) => {
+                              const video = e.currentTarget;
+                              console.log(`[PreviewPanel] Video canPlay (visual) - ${layer.clipId}-${layer.mediaId}, readyState: ${video.readyState}`);
+                            }}
+                            onError={(e) => {
+                              console.error(`[PreviewPanel] Video error (visual) - ${layer.clipId}-${layer.mediaId}:`, e.currentTarget.error);
+                            }}
                             className="w-full h-full object-contain"
                           />
                         ) : (
@@ -896,11 +928,26 @@ const ProgramPreview: React.FC = () => {
         currentTime={currentTime}
         duration={duration}
         isPlaying={isPlaying}
-        onPlayPause={() => (isPlaying ? pause() : play())}
-        onSeek={seek}
+        disabled={clips.length === 0}
+        onPlayPause={() => {
+          if (clips.length === 0) return; // Disable playback when timeline is empty
+          // Ensure program context is active before playing timeline
+          setActiveContext?.("program");
+          isPlaying ? transportPause() : transportPlay();
+        }}
+        onSeek={(time) => {
+          if (clips.length === 0) return; // Disable seeking when timeline is empty
+          seek(time);
+        }}
         formatTime={formatTime}
-        onStepBack={() => seek(Math.max(0, currentTime - step))}
-        onStepForward={() => seek(Math.min(duration, currentTime + step))}
+        onStepBack={() => {
+          if (clips.length === 0) return; // Disable frame stepping when timeline is empty
+          seek(Math.max(0, currentTime - step));
+        }}
+        onStepForward={() => {
+          if (clips.length === 0) return; // Disable frame stepping when timeline is empty
+          seek(Math.min(duration, currentTime + step));
+        }}
         leftActions={
           <div className="relative" ref={speedMenuRef}>
             <button onClick={() => setSpeedMenuOpen((o) => !o)} className="flex items-center gap-1 px-2 h-6 rounded text-[10px] font-medium text-text-muted hover:text-text-primary hover:bg-white/6 transition-colors" title="Playback speed" aria-expanded={speedMenuOpen}>
