@@ -6,9 +6,10 @@ interface PlayheadProps {
   pixelsPerSecond: number;
   duration: number;
   containerRef: RefObject<HTMLDivElement | null>;
+  rulerHeight?: number;
 }
 
-export const Playhead: React.FC<PlayheadProps> = ({ pixelsPerSecond, duration, containerRef }) => {
+export const Playhead: React.FC<PlayheadProps> = ({ pixelsPerSecond, duration, containerRef, rulerHeight = 24 }) => {
   const clockState = usePlaybackClock();
   const { seek } = usePlaybackControls();
   const { setScrollLeft } = useTimelineStore();
@@ -234,7 +235,6 @@ export const Playhead: React.FC<PlayheadProps> = ({ pixelsPerSecond, duration, c
         zIndex: 100,
         touchAction: "none",
       }}
-      onPointerDown={handlePointerDown}
       onLostPointerCapture={() => {
         setIsDragging(false);
         scrollVelocityRef.current = 0;
@@ -245,25 +245,41 @@ export const Playhead: React.FC<PlayheadProps> = ({ pixelsPerSecond, duration, c
     >
       {/* Visual line */}
       <div
-        className="absolute inset-y-0 left-1/2 -translate-x-1/2 pointer-events-auto bg-accent"
+        className="absolute inset-y-0 left-1/2 -translate-x-1/2 pointer-events-none bg-accent"
         style={{
           width: "2px",
           boxShadow: "0 0 0 1px rgba(0,0,0,0.25)",
-          cursor: "col-resize",
+          cursor: "default",
         }}
       />
 
       {/* Circle handle at top */}
       <div
         className="absolute rounded-full pointer-events-auto bg-accent"
+        onPointerDown={handlePointerDown}
+        onClick={(e) => e.stopPropagation()}
         style={{
           left: "50%",
           transform: "translateX(-50%)",
           top: "2px",
-          width: "10px",
-          height: "10px",
+          width: "12px",
+          height: "12px",
           boxShadow: "0 0 0 1px rgba(0,0,0,0.35)",
           cursor: "col-resize",
+        }}
+      />
+
+      {/* Ruler-only drag hit target so playhead never steals clip trim handles */}
+      <div
+        className="absolute left-1/2 -translate-x-1/2 pointer-events-auto"
+        onPointerDown={handlePointerDown}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          top: 0,
+          width: "16px",
+          height: `${Math.max(12, rulerHeight)}px`,
+          cursor: "col-resize",
+          background: "transparent",
         }}
       />
     </div>

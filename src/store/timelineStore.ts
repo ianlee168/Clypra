@@ -49,6 +49,8 @@ interface TimelineStore {
   scrollLeft: number;
   pixelsPerSecond: number;
   rippleEditEnabled: boolean;
+  clipDragMode: "free" | "insert" | "ripple";
+  snapEnabled: boolean;
   /** @internal Batch nesting depth — do not read directly */
   _batchDepth: number;
   /** @internal Deferred epoch flag — do not read directly */
@@ -77,6 +79,8 @@ interface TimelineStore {
   getTimelineEndTime: () => number;
   swapClips: () => { error: string | null };
   toggleRippleEdit: () => void;
+  setClipDragMode: (mode: "free" | "insert" | "ripple") => void;
+  toggleSnapEnabled: () => void;
   rippleTrimClip: (clipId: string, side: "left" | "right", deltaTime: number) => void;
   // Sequence-based operations
   insertClipAtIndex: (clipId: string, trackId: string, index: number) => void;
@@ -113,6 +117,8 @@ export const useTimelineStore = create<TimelineStore>(
     scrollLeft: 0,
     pixelsPerSecond: TIMELINE_ZOOM_DEFAULT * TIMELINE_PPS_PER_ZOOM,
     rippleEditEnabled: false,
+    clipDragMode: "free",
+    snapEnabled: true,
     _batchDepth: 0,
     _pendingEpochIncrement: false,
 
@@ -405,6 +411,14 @@ export const useTimelineStore = create<TimelineStore>(
       set((state) => ({ rippleEditEnabled: !state.rippleEditEnabled }));
     },
 
+    setClipDragMode: (mode) => {
+      set({ clipDragMode: mode });
+    },
+
+    toggleSnapEnabled: () => {
+      set((state) => ({ snapEnabled: !state.snapEnabled }));
+    },
+
     rippleTrimClip: (clipId, side, deltaTime) => {
       const state = get();
       const clip = state.clips.find((c) => c.id === clipId);
@@ -416,15 +430,20 @@ export const useTimelineStore = create<TimelineStore>(
       // Clamp trimming to underlying media duration when available.
       // Falls back to Infinity (no cap) when the media asset cannot be resolved.
       let mediaDurationBound = Infinity;
+      let mediaType: "video" | "audio" | "image" | null = null;
       try {
         // Lazy import to avoid circular deps during store init.
         // eslint-disable-next-line @typescript-eslint/no-var-requires
         const asset = useProjectStore.getState().mediaAssets?.find((a: any) => a.id === clip.mediaId);
+        mediaType = asset?.type ?? null;
         if (asset?.duration && Number.isFinite(asset.duration) && asset.duration > 0) {
           mediaDurationBound = asset.duration;
         }
       } catch {
         // ignore; keep Infinity bound
+      }
+      if (mediaType === "image") {
+        mediaDurationBound = Math.max(mediaDurationBound, 60 * 60); // 1 hour guardrail
       }
 
       const minDuration = 0.1;

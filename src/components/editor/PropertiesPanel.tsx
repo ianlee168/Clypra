@@ -138,12 +138,12 @@ export const PropertiesPanel: React.FC = () => {
           <div className="space-y-2">
             <div>
               <label className="text-xs text-text-muted block mb-1">Speed</label>
-              <select className="w-full bg-surface-raised border border-border rounded px-2 py-1 text-xs text-text-primary">
-                <option>0.25x</option>
-                <option>0.5x</option>
-                <option selected>1x</option>
-                <option>1.5x</option>
-                <option>2x</option>
+              <select defaultValue="1x" className="w-full bg-surface-raised border border-border rounded px-2 py-1 text-xs text-text-primary">
+                <option value="0.25x">0.25x</option>
+                <option value="0.5x">0.5x</option>
+                <option value="1x">1x</option>
+                <option value="1.5x">1.5x</option>
+                <option value="2x">2x</option>
               </select>
             </div>
 

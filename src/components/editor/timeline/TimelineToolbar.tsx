@@ -1,9 +1,10 @@
 import React, { useRef, useState } from "react";
-import { Plus, MousePointer2, Scissors, Magnet, Link2, Mic, Search, ZoomIn, ZoomOut, ArrowLeftRight, Waves, Undo2, Redo2, ScissorsLineDashed, ChevronLeft, ChevronRight, Trash2 } from "lucide-react";
+import { MousePointer2, ArrowRightLeft, Magnet, Link2, Mic, Search, ZoomIn, ZoomOut, ArrowLeftRight, Waves, Undo2, Redo2, ScissorsLineDashed, ChevronLeft, ChevronRight, Trash2, Copy } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/Tooltip";
 import { useTimelineStore } from "@/store/timelineStore";
 import { useUIStore } from "@/store/uiStore";
+import { generateId } from "@/lib/id";
 // import { useSettingsStore } from "@/store/settingsStore";
 import { useHistoryStore } from "@/store/historyStore";
 import { SuccessToast } from "@/components/ui/SuccessToast";
@@ -13,7 +14,7 @@ import { useSplitMode } from "@/hooks/useSplitMode";
 import { EditingActions } from "@/core/interactions";
 
 export const TimelineToolbar: React.FC = () => {
-  const { zoomLevel, pixelsPerSecond, setZoom, addTrack, swapClips, rippleEditEnabled, toggleRippleEdit } = useTimelineStore();
+  const { zoomLevel, pixelsPerSecond, setZoom, swapClips, rippleEditEnabled, toggleRippleEdit, clipDragMode, setClipDragMode, snapEnabled, toggleSnapEnabled, tracks, normalizeTrack } = useTimelineStore();
   const { selectedClipIds, clearSelection } = useUIStore();
   // const { snapToGrid, setSnapToGrid } = useSettingsStore();
   const { state: historyState, undo, redo } = useHistoryStore();
@@ -94,9 +95,9 @@ export const TimelineToolbar: React.FC = () => {
     }
   };
 
-  const toolButton = "text-text-muted hover:text-text-primary hover:bg-surface-raised/80 cursor-pointer";
+  const toolButton = "text-text-muted hover:text-text-primary hover:bg-surface-raised/80 cursor-pointer disabled:cursor-not-allowed disabled:pointer-events-auto";
   const activeButton = "bg-accent/15 text-accent-soft border-accent/40 hover:bg-accent/20";
-  const zoomButton = "cursor-pointer h-8 w-8 rounded-full border border-accent/35 bg-surface-raised text-accent-soft shadow-[0_0_0_1px_rgba(0,0,0,0.28),0_6px_16px_rgba(0,0,0,0.22)] hover:border-accent/60 hover:bg-accent/15 hover:text-text-primary transition-colors";
+  const zoomButton = "cursor-pointer disabled:cursor-not-allowed disabled:pointer-events-auto h-8 w-8 rounded-full border border-accent/35 bg-surface-raised text-accent-soft shadow-[0_0_0_1px_rgba(0,0,0,0.28),0_6px_16px_rgba(0,0,0,0.22)] hover:border-accent/60 hover:bg-accent/15 hover:text-text-primary transition-colors";
 
   const Tool = ({ label, children }: { label: string; children: React.ReactNode }) => (
     <Tooltip>
@@ -167,6 +168,34 @@ export const TimelineToolbar: React.FC = () => {
     setTimeout(() => setToastMessage(null), 2000);
   };
 
+  const handleDuplicateSelectedClips = () => {
+    if (selectedClipIds.length === 0) return;
+    const { clips, addClip } = useTimelineStore.getState();
+    const selected = clips.filter((c) => selectedClipIds.includes(c.id)).sort((a, b) => a.startTime - b.startTime);
+    if (selected.length === 0) return;
+    const minStart = selected[0].startTime;
+    const maxEnd = Math.max(...selected.map((c) => c.startTime + c.duration));
+    const offset = maxEnd - minStart;
+    selected.forEach((clip) => {
+      addClip({
+        ...clip,
+        id: generateId("clip"),
+        startTime: clip.startTime + offset,
+      });
+    });
+    setToastMessage(`Duplicated ${selected.length} clip${selected.length > 1 ? "s" : ""}`);
+    setTimeout(() => setToastMessage(null), 2000);
+  };
+
+  const handleCloseGaps = () => {
+    const { removeEmptyNonMainTracks } = useTimelineStore.getState();
+    const trackIds = tracks.map((t) => t.id);
+    trackIds.forEach((trackId) => normalizeTrack(trackId));
+    removeEmptyNonMainTracks(trackIds);
+    setToastMessage("Closed timeline gaps");
+    setTimeout(() => setToastMessage(null), 2000);
+  };
+
   return (
     <TooltipProvider>
       <div data-timeline-interactive="true" className="border-b border-timeline-toolbar-border flex items-center p-1 gap-2">
@@ -180,6 +209,24 @@ export const TimelineToolbar: React.FC = () => {
           <Tool label="Redo (Cmd+Shift+Z)">
             <Button variant="ghost" size="icon-sm" className={toolButton} onClick={redo} disabled={!historyState.canRedo}>
               <Redo2 className="w-4 h-4" />
+            </Button>
+          </Tool>
+
+          <Tool label="Free move mode">
+            <Button variant="ghost" size="icon-sm" className={clipDragMode === "free" ? activeButton : toolButton} onClick={() => setClipDragMode("free")}>
+              <MousePointer2 className="w-4 h-4" />
+            </Button>
+          </Tool>
+
+          <Tool label="Insert mode">
+            <Button variant="ghost" size="icon-sm" className={clipDragMode === "insert" ? activeButton : toolButton} onClick={() => setClipDragMode("insert")}>
+              <ArrowRightLeft className="w-4 h-4" />
+            </Button>
+          </Tool>
+
+          <Tool label="Ripple move mode">
+            <Button variant="ghost" size="icon-sm" className={clipDragMode === "ripple" ? activeButton : toolButton} onClick={() => setClipDragMode("ripple")}>
+              <Waves className="w-4 h-4" />
             </Button>
           </Tool>
 
@@ -215,11 +262,11 @@ export const TimelineToolbar: React.FC = () => {
             </Button>
           </Tool> */}
 
-          {/* <Tool label="Snap">
-            <Button variant="ghost" size="icon-sm" className={snapToGrid ? activeButton : toolButton} onClick={() => setSnapToGrid(!snapToGrid)}>
+          <Tool label="Snap">
+            <Button variant="ghost" size="icon-sm" className={snapEnabled ? activeButton : toolButton} onClick={toggleSnapEnabled}>
               <Magnet className="w-4 h-4" />
             </Button>
-          </Tool> */}
+          </Tool>
 
           <Tool label="Ripple edit mode (R) - Hold Shift while trimming">
             <Button variant="ghost" size="icon-sm" className={rippleEditEnabled ? activeButton : toolButton} onClick={toggleRippleEdit}>
@@ -230,6 +277,18 @@ export const TimelineToolbar: React.FC = () => {
           <Tool label="Delete selected clip(s)">
             <Button variant="ghost" size="icon-sm" className={toolButton} onClick={handleDeleteSelectedClips} disabled={selectedClipIds.length === 0}>
               <Trash2 className="w-4 h-4" />
+            </Button>
+          </Tool>
+
+          <Tool label="Duplicate selected clip(s) (Cmd/Ctrl+D)">
+            <Button variant="ghost" size="icon-sm" className={toolButton} onClick={handleDuplicateSelectedClips} disabled={selectedClipIds.length === 0}>
+              <Copy className="w-4 h-4" />
+            </Button>
+          </Tool>
+
+          <Tool label="Close gaps">
+            <Button variant="ghost" size="icon-sm" className={toolButton} onClick={handleCloseGaps}>
+              <ScissorsLineDashed className="w-4 h-4" />
             </Button>
           </Tool>
         </div>

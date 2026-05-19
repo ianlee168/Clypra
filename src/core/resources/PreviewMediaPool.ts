@@ -183,8 +183,9 @@ export class PreviewMediaPool {
       }
 
       if (managed) {
+        const isTrackMuted = track?.muted === true;
         const isPrimaryAudibleVideo = primaryVideoClip?.id === clip.id;
-        this.updateVideoElement(managed, clip, syncState, tracks, isPrimaryAudibleVideo);
+        this.updateVideoElement(managed, clip, syncState, tracks, isPrimaryAudibleVideo, isTrackMuted);
       }
     }
 
@@ -207,7 +208,8 @@ export class PreviewMediaPool {
       }
 
       if (managed) {
-        this.updateAudioElement(managed, clip, syncState);
+        const isTrackMuted = track?.muted === true;
+        this.updateAudioElement(managed, clip, syncState, isTrackMuted);
       }
     }
 
@@ -337,18 +339,28 @@ export class PreviewMediaPool {
     this.videos.delete(key);
   }
 
-  private updateVideoElement(managed: ManagedVideo, clip: Clip, syncState: PreviewSyncState, tracks: Array<{ id: string; type: string }>, isPrimaryAudibleVideo: boolean): void {
+  private updateVideoElement(
+    managed: ManagedVideo,
+    clip: Clip,
+    syncState: PreviewSyncState,
+    tracks: Array<{ id: string; type: string }>,
+    isPrimaryAudibleVideo: boolean,
+    isTrackMuted: boolean,
+  ): void {
     const video = managed.element;
     const sourceTime = getClipSourceTime(clip, syncState.time);
 
     // Only one primary video clip is audible; others stay muted.
-    const shouldMute = syncState.muted || syncState.volume === 0 || !isPrimaryAudibleVideo;
+    const shouldMute = syncState.muted || syncState.volume === 0 || isTrackMuted || !isPrimaryAudibleVideo;
     video.muted = shouldMute;
     video.volume = shouldMute ? 0 : Math.max(0, Math.min(1, syncState.volume / 100));
     video.playbackRate = syncState.speed;
 
     if ("preservesPitch" in video) {
-      (video as any).preservesPitch = false;
+      (video as any).preservesPitch = true;
+    }
+    if ("webkitPreservesPitch" in video) {
+      (video as any).webkitPreservesPitch = true;
     }
 
     if (sourceTime === null) {
@@ -534,16 +546,20 @@ export class PreviewMediaPool {
     this.audios.delete(key);
   }
 
-  private updateAudioElement(managed: ManagedAudio, clip: Clip, syncState: PreviewSyncState): void {
+  private updateAudioElement(managed: ManagedAudio, clip: Clip, syncState: PreviewSyncState, isTrackMuted: boolean): void {
     const audio = managed.element;
     const sourceTime = getClipSourceTime(clip, syncState.time);
 
-    audio.muted = syncState.muted || syncState.volume === 0;
-    audio.volume = Math.max(0, Math.min(1, syncState.volume / 100));
+    const shouldMute = syncState.muted || syncState.volume === 0 || isTrackMuted;
+    audio.muted = shouldMute;
+    audio.volume = shouldMute ? 0 : Math.max(0, Math.min(1, syncState.volume / 100));
     audio.playbackRate = syncState.speed;
 
     if ("preservesPitch" in audio) {
-      (audio as any).preservesPitch = false;
+      (audio as any).preservesPitch = true;
+    }
+    if ("webkitPreservesPitch" in audio) {
+      (audio as any).webkitPreservesPitch = true;
     }
 
     if (sourceTime === null) {
