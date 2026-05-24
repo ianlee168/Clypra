@@ -63,7 +63,7 @@ export const TextSourcePreview: React.FC<{ preset: any }> = ({ preset }) => {
       }
     : {};
 
-  const previewText = preset.presetType === "template" ? preset.defaultText || "Text" : "Default text";
+  const previewText = preset.name || "Text";
 
   return (
     <div className="w-full aspect-video bg-black flex items-center justify-center relative p-8 shadow-[0_0_40px_rgba(0,0,0,0.8)] border border-white/5 overflow-hidden">
