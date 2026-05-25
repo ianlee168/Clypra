@@ -17,8 +17,8 @@
 
 import type { EvaluatedScene, EvaluatedMediaLayer, EvaluatedTextLayer } from "../evaluation/types";
 import { getResourceCache } from "../resources/ResourceCache";
-import { renderTextEffectToContext } from "../../features/text-effects/renderer";
-import { allEffects } from "../../features/text-effects/effects/definitions";
+import { renderTextEffectToContext } from "../../features/renderer/renderer";
+import { allEffects } from "../../features/renderer/definitions";
 
 /**
  * Global pool for OffscreenCanvas to prevent GC stalls during rendering/export.
@@ -354,7 +354,7 @@ function drawLoadingPlaceholder(ctx: CanvasRenderingContext2D | OffscreenCanvasR
  * Preview MUST use this same code path.
  */
 function rasterizeTextLayer(ctx: CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D, layer: EvaluatedTextLayer, width: number, height: number, scaleX: number, scaleY: number): void {
-  // If we have a styleId matching our premium text effects, use premium renderer
+  // If we have a styleId matching our core text effects, use core procedural renderer
   if (layer.styleId) {
     const effect = allEffects.find((e) => e.id === layer.styleId);
     if (effect) {

@@ -10,7 +10,7 @@
 export interface TextEffectPreset {
   id: string;
   name: string;
-  category: "Trending" | "Classic" | "NEW" | "Hits" | "Animation" | "Food" | "Textile Art" | "Manuscript" | "Metal" | "Neon" | "3D" | "Gradient" | "Glitch";
+  category: "Classic" | "Hits" | "Animation" | "Food" | "Textile Art" | "Manuscript" | "Metal" | "Neon" | "3D" | "Gradient" | "Glitch" | "Retro" | "Clean" | "Organic";
   fontFamily: string;
   color: string; // supports solid hex or comma-separated vertical gradients
   fontWeight: "normal" | "bold" | number;
@@ -36,8 +36,8 @@ export interface TextEffectPreset {
 export const TEXT_EFFECTS: TextEffectPreset[] = [
   {
     id: "glow-yellow",
-    name: "Clypra",
-    category: "Trending",
+    name: "Yellow Glow",
+    category: "Neon",
     fontFamily: "Outfit",
     color: "#ffffff",
     fontWeight: "bold",
@@ -47,8 +47,8 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "neon-red",
-    name: "Clypra",
-    category: "Trending",
+    name: "Red Neon",
+    category: "Neon",
     fontFamily: "Outfit",
     color: "#ffffff",
     fontWeight: "bold",
@@ -58,7 +58,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "classic-gold",
-    name: "Clypra",
+    name: "Classic Gold",
     category: "Classic",
     fontFamily: "Outfit",
     color: "#ffe066, #b38600",
@@ -69,8 +69,8 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "retro-sunset",
-    name: "Clypra",
-    category: "Trending",
+    name: "Retro Sunset",
+    category: "Gradient",
     fontFamily: "Poppins",
     color: "#ff3e00, #ff0077, #aa00ff",
     fontWeight: "bold",
@@ -80,8 +80,8 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "bubblegum-pink",
-    name: "Clypra",
-    category: "NEW",
+    name: "Bubblegum Pink",
+    category: "Hits",
     fontFamily: "Poppins",
     color: "#ffffff",
     fontWeight: "bold",
@@ -91,7 +91,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "3d-wood",
-    name: "Clypra",
+    name: "3D Wood",
     category: "Classic",
     fontFamily: "Roboto",
     color: "#d2b48c, #8b5a2b",
@@ -102,8 +102,8 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "cyber-neon",
-    name: "Clypra",
-    category: "Trending",
+    name: "Cyber Neon",
+    category: "Neon",
     fontFamily: "Outfit",
     color: "#00ffff",
     fontWeight: "bold",
@@ -113,7 +113,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "midnight-glow",
-    name: "Clypra",
+    name: "Midnight Glow",
     category: "Hits",
     fontFamily: "Inter",
     color: "#120a2a",
@@ -124,8 +124,8 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "glitch-tech",
-    name: "Clypra",
-    category: "NEW",
+    name: "Glitch Tech",
+    category: "Glitch",
     fontFamily: "Outfit",
     color: "#ffffff",
     fontWeight: 700,
@@ -135,7 +135,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "comic-book",
-    name: "Clypra",
+    name: "Comic Book",
     category: "Hits",
     fontFamily: "Poppins",
     color: "#ffd700",
@@ -146,8 +146,8 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "graffiti-splash",
-    name: "Clypra",
-    category: "NEW",
+    name: "Graffiti Splash",
+    category: "Textile Art",
     fontFamily: "Outfit",
     color: "#39ff14",
     fontWeight: "bold",
@@ -157,7 +157,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "silver-chrome",
-    name: "Clypra",
+    name: "Silver Chrome",
     category: "Metal",
     fontFamily: "Outfit",
     color: "#ffffff, #999999, #eeeeee",
@@ -168,7 +168,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "frozen-ice",
-    name: "Clypra",
+    name: "Frozen Ice",
     category: "Food",
     fontFamily: "Outfit",
     color: "#e6ffff, #80e5ff",
@@ -179,8 +179,8 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "fire-flame",
-    name: "Clypra",
-    category: "Trending",
+    name: "Fire Flame",
+    category: "Animation",
     fontFamily: "Poppins",
     color: "#ffff00, #ff3300",
     fontWeight: "bold",
@@ -190,7 +190,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "candy-rainbow",
-    name: "Clypra",
+    name: "Candy Rainbow",
     category: "Hits",
     fontFamily: "Poppins",
     color: "#ff007f, #aa00ff, #00c8ff, #00ff66",
@@ -201,7 +201,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "vintage-newspaper",
-    name: "Clypra",
+    name: "Vintage Newspaper",
     category: "Manuscript",
     fontFamily: "Roboto",
     color: "#111111",
@@ -212,8 +212,8 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "acid-lime",
-    name: "Clypra",
-    category: "NEW",
+    name: "Acid Lime",
+    category: "Neon",
     fontFamily: "Outfit",
     color: "#dfff11",
     fontWeight: "bold",
@@ -223,8 +223,8 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "electric-blue",
-    name: "Clypra",
-    category: "Trending",
+    name: "Electric Blue",
+    category: "Neon",
     fontFamily: "Outfit",
     color: "#00dfff",
     fontWeight: "bold",
@@ -234,8 +234,8 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "barbie-dream",
-    name: "Clypra",
-    category: "NEW",
+    name: "Barbie Dream",
+    category: "Gradient",
     fontFamily: "Poppins",
     color: "#ff99cc, #ff007f",
     fontWeight: "bold",
@@ -245,7 +245,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "royal-emerald",
-    name: "Clypra",
+    name: "Royal Emerald",
     category: "Classic",
     fontFamily: "Roboto",
     color: "#006633, #00cc66",
@@ -256,7 +256,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   },
   {
     id: "carbon-tech",
-    name: "Clypra",
+    name: "Carbon Tech",
     category: "Metal",
     fontFamily: "Inter",
     color: "#333333",
@@ -312,7 +312,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   {
     id: "lava-forge",
     name: "Lava Forge",
-    category: "Trending",
+    category: "3D",
     fontFamily: "Impact",
     color: "#FF4500",
     fontWeight: 900,
@@ -334,7 +334,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   {
     id: "graffiti-bomb",
     name: "Graffiti Bomb",
-    category: "NEW",
+    category: "Textile Art",
     fontFamily: "Impact",
     color: "#FFA500",
     fontWeight: 900,
@@ -388,7 +388,7 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
   {
     id: "toxic-slime",
     name: "Toxic Slime",
-    category: "Trending",
+    category: "Gradient",
     fontFamily: "Impact",
     color: "#39FF14",
     fontWeight: 900,
@@ -426,5 +426,84 @@ export const TEXT_EFFECTS: TextEffectPreset[] = [
     fontWeight: 900,
     fontStyle: "normal",
     stroke: { color: "#00FFFF", width: 1 },
+  },
+  {
+    id: "ref-gold-3d-premium",
+    name: "Gold 3D Premium",
+    category: "3D",
+    fontFamily: "Impact",
+    color: "#FFE87C, #F5B018, #C87000, #914500, #FFE87C",
+    fontWeight: 900,
+    fontStyle: "normal",
+    stroke: { color: "#1D0D00", width: 2 },
+    shadow: { color: "#D47000", blur: 45, offsetX: 0, offsetY: 0 },
+    premium: true,
+  },
+  {
+    id: "ref-red-neon-outline",
+    name: "Red Neon Outline",
+    category: "Neon",
+    fontFamily: "Impact",
+    color: "#FFFFFF",
+    fontWeight: 900,
+    fontStyle: "normal",
+    stroke: { color: "#FF0000", width: 5 },
+    shadow: { color: "#FF0000", blur: 10, offsetX: 0, offsetY: 0 },
+    premium: true,
+  },
+  {
+    id: "newspaper-offset",
+    name: "Newspaper Offset",
+    category: "Retro",
+    fontFamily: "Playfair Display",
+    color: "#000000",
+    fontWeight: 700,
+    fontStyle: "italic",
+    premium: true,
+  },
+  {
+    id: "frosted-glass-etch",
+    name: "Frosted Glass Etch",
+    category: "Clean",
+    fontFamily: "Cinzel",
+    color: "rgba(235, 247, 250, 0.35)",
+    fontWeight: 300,
+    fontStyle: "normal",
+    shadow: { color: "#000000", blur: 2, offsetX: 1.5, offsetY: 1.5 },
+    premium: true,
+  },
+  {
+    id: "burned-wood-pyrography",
+    name: "Burned Wood Pyrography",
+    category: "Organic",
+    fontFamily: "Cinzel Decorative",
+    color: "#060302",
+    fontWeight: 900,
+    fontStyle: "normal",
+    shadow: { color: "rgba(6, 3, 2, 0.98)", blur: 3, offsetX: 0, offsetY: 0 },
+    premium: true,
+  },
+  {
+    id: "victorian-ornate",
+    name: "Victorian Ornate",
+    category: "Retro",
+    fontFamily: "Cinzel Decorative",
+    color: "#2d1802, #d4af37, #aa7c11, #f9e8a2, #8c6227, #f3e5ab, #422a08",
+    fontWeight: 700,
+    fontStyle: "normal",
+    stroke: { color: "#ffffff", width: 0.5 },
+    shadow: { color: "#150e04", blur: 0, offsetX: 7.5, offsetY: 7.5 },
+    premium: true,
+  },
+  {
+    id: "calligraphy-ink",
+    name: "Calligraphy Ink",
+    category: "Clean",
+    fontFamily: "Pinyon Script",
+    color: "#02050f",
+    fontWeight: 400,
+    fontStyle: "italic",
+    shadow: { color: "#02050f", blur: 1.8, offsetX: 0, offsetY: 0 },
+    premium: true,
   },
 ];

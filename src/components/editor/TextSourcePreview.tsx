@@ -1,9 +1,10 @@
 import { useRef, useEffect } from "react";
-import { allEffects } from "../../features/text-effects/effects/definitions";
-import { renderTextEffect } from "../../features/text-effects/renderer";
+import { LottiePlayer } from "../../features/text-templates/LottiePlayer";
+import { renderTextEffect } from "../../features/renderer/renderer";
+import { allEffects } from "../../features/renderer/definitions";
 
 const getFontFamilyStack = (fontFamily: string) => {
-  const f = fontFamily.toLowerCase();
+  const f = fontFamily?.toLowerCase() || "";
   if (f.includes("outfit")) return '"Outfit", sans-serif';
   if (f.includes("poppins")) return '"Poppins", sans-serif';
   if (f.includes("roboto")) return '"Roboto", sans-serif';
@@ -13,18 +14,29 @@ const getFontFamilyStack = (fontFamily: string) => {
 
 export const TextSourcePreview: React.FC<{ preset: any }> = ({ preset }) => {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const previewText = preset.name || "Text";
-  const premiumEffect = preset.styleId ? allEffects.find((e) => e.id === preset.styleId) : null;
+  const previewText = "CLYPRA";
+  const isTemplate = preset?.presetType === "template" || !!preset?.lottieData;
+  const styleId = preset?.styleId || preset?.id;
+  const premiumEffect = styleId ? allEffects.find((e) => e.id === styleId) : null;
 
   useEffect(() => {
     const canvas = canvasRef.current;
-    if (!canvas || !premiumEffect) return;
+    if (!canvas || !premiumEffect || isTemplate) return;
     canvas.width = 640;
     canvas.height = 360;
+
     renderTextEffect(canvas, previewText, premiumEffect, 44);
-  }, [previewText, premiumEffect]);
+  }, [previewText, premiumEffect, isTemplate]);
 
   if (!preset) return null;
+
+  if (isTemplate) {
+    return (
+      <div className="w-full aspect-video bg-black flex items-center justify-center relative p-8 shadow-[0_0_40px_rgba(0,0,0,0.8)] border border-white/5 overflow-hidden">
+        <LottiePlayer lottieData={preset.injectedData || preset.lottieData} autoplay={true} loop={true} className="w-full h-full object-contain" />
+      </div>
+    );
+  }
 
   if (premiumEffect) {
     return (
