@@ -22,8 +22,9 @@
  */
 
 import { create } from "zustand";
-import type { Track, Clip } from "@/types";
+import type { Track, Clip, TextClip } from "@/types";
 import { generateId, getCounter } from "@/lib/id";
+import { recalculateTextClipBounds } from "@/lib/textClip";
 import { useUIStore } from "./uiStore";
 import { useProjectStore } from "./projectStore";
 import { clampTimelinePixelsPerSecond, clampTimelineZoom, TIMELINE_PPS_PER_ZOOM, TIMELINE_ZOOM_DEFAULT } from "../lib/timelineZoom";
@@ -295,7 +296,30 @@ export const useTimelineStore = create<TimelineStore>(
     updateClip: (clipId, updates) => {
       set((state) => {
         const next: Partial<TimelineStore> = {
-          clips: state.clips.map((c) => (c.id === clipId ? { ...c, ...updates } : c)),
+          clips: state.clips.map((c) => {
+            if (c.id !== clipId) return c;
+
+            // Auto-recalculate bounds for text clips when text/style changes
+            const isTextClip = "text" in c;
+            const hasManualBounds = "x" in updates || "y" in updates || "width" in updates || "height" in updates;
+            const TEXT_STYLE_KEYS: (keyof TextClip)[] = ["text", "fontSize", "fontFamily", "fontWeight", "fontStyle", "styleId", "stroke", "shadow", "background", "letterSpacing"];
+            const hasStyleChange = TEXT_STYLE_KEYS.some((k) => k in updates);
+
+            if (isTextClip && hasStyleChange && !hasManualBounds) {
+              try {
+                const project = useProjectStore.getState().project;
+                const canvasWidth = project?.canvasWidth ?? 1920;
+                const canvasHeight = project?.canvasHeight ?? 1080;
+                return recalculateTextClipBounds(c as TextClip, updates as Partial<TextClip>, canvasWidth, canvasHeight);
+              } catch (e) {
+                // Fallback: apply updates without recalculation
+                console.warn("[updateClip] Bounds recalculation failed, applying raw updates", e);
+                return { ...c, ...updates };
+              }
+            }
+
+            return { ...c, ...updates };
+          }),
         };
         if (state._batchDepth > 0) {
           next._pendingEpochIncrement = true;

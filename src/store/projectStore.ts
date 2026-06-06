@@ -89,6 +89,44 @@ const getAspectRatioDimensions = (ratio: string): { width: number; height: numbe
 let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
 const AUTO_SAVE_DELAY = 500; // ms
 
+async function preloadTextEffectDefinitionsFromClips(clips: any[] | undefined): Promise<void> {
+  if (!clips?.length) return;
+
+  const styleIds = Array.from(new Set(clips.map((clip) => clip?.styleId).filter((id): id is string => typeof id === "string" && id.length > 0)));
+  const embeddedDefinitions = clips
+    .map((clip) => clip?.styleDefinition ?? clip?.style_definition)
+    .filter((definition) => definition && typeof definition.id === "string");
+
+  if (styleIds.length === 0 && embeddedDefinitions.length === 0) return;
+
+  try {
+    const { useEffectsStore } = await import("@/features/text-effects/store/effectsStore");
+
+    if (embeddedDefinitions.length > 0) {
+      useEffectsStore.setState((state) => {
+        const definitions = { ...state.definitions };
+        for (const definition of embeddedDefinitions) {
+          definitions[definition.id] = definition;
+        }
+        return { definitions };
+      });
+    }
+
+    const store = useEffectsStore.getState();
+    const missingStyleIds = styleIds.filter((id) => !useEffectsStore.getState().definitions[id]);
+    if (missingStyleIds.length === 0) return;
+
+    const results = await Promise.allSettled(missingStyleIds.map((id) => store.fetchDefinitionOnlyById(id)));
+    results.forEach((result, index) => {
+      if (result.status === "rejected") {
+        console.warn(`[LoadProject] Failed to preload text effect definition ${missingStyleIds[index]}:`, result.reason);
+      }
+    });
+  } catch (err) {
+    console.warn("[LoadProject] Text effect definition preload failed:", err);
+  }
+}
+
 export const useProjectStore = create<ProjectStore>((set, get) => ({
   project: null,
   mediaAssets: [],
@@ -151,6 +189,8 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
 
     // Apply project and mediaAssets (projectStore owns these)
     set({ project, mediaAssets: payload?.mediaAssets ?? [] });
+
+    await preloadTextEffectDefinitionsFromClips(payload?.clips);
 
     // Let timelineStore hydrate its own state (respects ownership boundary)
     try {
