@@ -81,7 +81,7 @@ describe("projectStore", () => {
 
     await useProjectStore.getState().loadProject(project, { tracks, clips, mediaAssets: [] });
 
-    expect(hydrateSpy).toHaveBeenCalledWith({ tracks, clips });
+    expect(hydrateSpy).toHaveBeenCalledWith({ tracks, clips, transitions: [] });
     expect(useTimelineStore.getState().clips[0]).toMatchObject({ id: "clip-text", styleId: "premium-sticker" });
   });
 });

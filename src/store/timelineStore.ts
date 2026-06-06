@@ -22,7 +22,7 @@
  */
 
 import { create } from "zustand";
-import type { Track, Clip, TextClip } from "@/types";
+import type { Track, Clip, TextClip, TransitionTimelineItem, TransitionType } from "@/types";
 import { generateId, getCounter } from "@/lib/id";
 import { recalculateTextClipBounds } from "@/lib/textClip";
 import { useUIStore } from "./uiStore";
@@ -34,6 +34,7 @@ import { autoSaveMiddleware } from "./middleware/autoSaveMiddleware";
 interface TimelineStore {
   tracks: Track[];
   clips: Clip[];
+  transitions: TransitionTimelineItem[];
   /**
    * First created video track - UI metadata only.
    * Used for: default drop target, visual highlighting, user expectations.
@@ -62,7 +63,7 @@ interface TimelineStore {
   /** Increment epoch (for cache invalidation) */
   incrementEpoch: () => void;
   /** Hydrate timeline state from project load (atomic operation) */
-  hydrateFromProject: (payload: { tracks?: any[]; clips?: any[] }) => void;
+  hydrateFromProject: (payload: { tracks?: any[]; clips?: any[]; transitions?: TransitionTimelineItem[] }) => void;
   addTrack: (type: "video" | "audio" | "text") => void;
   /** Inserts a track at index (clamped); returns the new track id. */
   insertTrackAt: (type: "video" | "audio" | "text", index: number) => string;
@@ -73,6 +74,9 @@ interface TimelineStore {
   addClip: (clip: Clip) => void;
   removeClip: (clipId: string) => void;
   updateClip: (clipId: string, updates: Partial<Clip>) => void;
+  addTransition: (transition: TransitionTimelineItem) => void;
+  removeTransition: (transitionId: string) => void;
+  createTransitionBetweenClips: (fromClipId: string, toClipId: string, type: TransitionType, duration?: number) => { transition?: TransitionTimelineItem; error: string | null };
   moveClip: (clipId: string, startTime: number) => void;
   setZoom: (level: number) => void;
   /** Clamps to the SRP zoom range and syncs `zoomLevel` to `pixelsPerSecond / 100`. */
@@ -115,6 +119,7 @@ export const useTimelineStore = create<TimelineStore>(
   autoSaveMiddleware((set, get) => ({
     tracks: [],
     clips: [],
+    transitions: [],
     mainVideoTrackId: null,
     epoch: 0,
     zoomLevel: TIMELINE_ZOOM_DEFAULT,
@@ -154,6 +159,7 @@ export const useTimelineStore = create<TimelineStore>(
     hydrateFromProject: (payload) => {
       const finalTracks = payload?.tracks ?? [];
       const finalClipsRaw = payload?.clips ?? [];
+      const finalTransitions = payload?.transitions ?? [];
 
       // Normalize clip timing with media asset data
       const mediaAssets = useProjectStore.getState().mediaAssets;
@@ -167,6 +173,7 @@ export const useTimelineStore = create<TimelineStore>(
       set({
         tracks: finalTracks,
         clips: normalizedClips,
+        transitions: finalTransitions,
         scrollLeft: 0,
         zoomLevel: TIMELINE_ZOOM_DEFAULT,
         pixelsPerSecond: TIMELINE_ZOOM_DEFAULT * TIMELINE_PPS_PER_ZOOM,
@@ -217,6 +224,7 @@ export const useTimelineStore = create<TimelineStore>(
       set((state) => ({
         tracks: state.tracks.filter((t) => t.id !== trackId),
         clips: state.clips.filter((c) => c.trackId !== trackId),
+        transitions: state.transitions.filter((transition) => transition.placement.trackId !== trackId),
       }));
     },
 
@@ -283,6 +291,7 @@ export const useTimelineStore = create<TimelineStore>(
 
         const next: Partial<TimelineStore> = {
           clips: remainingClips,
+          transitions: state.transitions.filter((transition) => transition.fromItemId !== clipId && transition.toItemId !== clipId),
         };
         if (state._batchDepth > 0) {
           next._pendingEpochIncrement = true;
@@ -291,7 +300,79 @@ export const useTimelineStore = create<TimelineStore>(
         }
         return next;
       });
-    },
+	    },
+
+	    addTransition: (transition) => {
+	      set((state) => {
+	        const next: Partial<TimelineStore> = {
+	          transitions: [...state.transitions.filter((t) => t.id !== transition.id), transition],
+	        };
+	        if (state._batchDepth > 0) {
+	          next._pendingEpochIncrement = true;
+	        } else {
+	          next.epoch = state.epoch + 1;
+	        }
+	        return next;
+	      });
+	    },
+
+	    removeTransition: (transitionId) => {
+	      set((state) => {
+	        const next: Partial<TimelineStore> = {
+	          transitions: state.transitions.filter((transition) => transition.id !== transitionId),
+	        };
+	        if (state._batchDepth > 0) {
+	          next._pendingEpochIncrement = true;
+	        } else {
+	          next.epoch = state.epoch + 1;
+	        }
+	        return next;
+	      });
+	    },
+
+	    createTransitionBetweenClips: (fromClipId, toClipId, type, duration = 0.5) => {
+	      const state = get();
+	      const fromClip = state.clips.find((clip) => clip.id === fromClipId);
+	      const toClip = state.clips.find((clip) => clip.id === toClipId);
+	      if (!fromClip || !toClip) return { error: "Select two clips to add a transition" };
+	      if (fromClip.trackId !== toClip.trackId) return { error: "Transitions require two clips on the same track" };
+
+	      const track = state.tracks.find((t) => t.id === fromClip.trackId);
+	      if (!track) return { error: "Transition track was not found" };
+	      if (track.locked) return { error: "Unlock the track before adding a transition" };
+	      if (track.type === "audio") return { error: "Visual transitions can only be added to video or text tracks" };
+
+	      const [left, right] = fromClip.startTime <= toClip.startTime ? [fromClip, toClip] : [toClip, fromClip];
+	      const leftEnd = left.startTime + left.duration;
+	      const gap = right.startTime - leftEnd;
+	      if (gap > 0.001) return { error: "Move clips together before adding a transition" };
+	      if (left.duration < duration / 2 || right.duration < duration / 2) return { error: "Clips are too short for this transition" };
+
+	      const transitionStart = Math.max(0, leftEnd - duration / 2);
+	      const transition: TransitionTimelineItem = {
+	        id: generateId("transition"),
+	        kind: "transition",
+	        type,
+	        fromItemId: left.id,
+	        toItemId: right.id,
+	        alignment: "center",
+	        easing: "easeInOut",
+	        placement: {
+	          trackId: left.trackId,
+	          startTime: transitionStart,
+	          duration,
+	          role: "effect",
+	          zIndex: Number.MAX_SAFE_INTEGER,
+	        },
+	        effects: { effects: [], version: 0 },
+	        metadata: {
+	          createdFrom: "transitions-panel",
+	        },
+	      };
+
+	      get().addTransition(transition);
+	      return { transition, error: null };
+	    },
 
     updateClip: (clipId, updates) => {
       set((state) => {

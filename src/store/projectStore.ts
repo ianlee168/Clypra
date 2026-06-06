@@ -24,7 +24,7 @@
  */
 
 import { create } from "zustand";
-import type { Project, MediaAsset } from "@/types";
+import type { Project, MediaAsset, TransitionTimelineItem } from "@/types";
 import { MAX_PROJECT_NAME_LENGTH } from "@/types";
 import { toRustProject } from "@/types/serialization";
 import { generateId } from "@/lib/id";
@@ -41,7 +41,7 @@ interface ProjectStore {
   /** Convenience: show toast with variant and auto-dismiss. */
   showToast: (message: string, variant?: "success" | "error" | "warning", durationMs?: number) => void;
   createProject: (name: string, aspectRatio: string, frameRate: 24 | 30 | 60) => void;
-  loadProject: (project: Project, payload?: { tracks?: any[]; clips?: any[]; mediaAssets?: MediaAsset[] }) => Promise<void> | void;
+  loadProject: (project: Project, payload?: { tracks?: any[]; clips?: any[]; transitions?: TransitionTimelineItem[]; mediaAssets?: MediaAsset[] }) => Promise<void> | void;
   addMediaAsset: (asset: MediaAsset) => void;
   removeMediaAsset: (assetId: string) => void;
   updateProject: (updates: Partial<Project>) => void;
@@ -154,9 +154,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       aspectRatio: aspectRatio as any,
       canvasWidth: dims.width,
       canvasHeight: dims.height,
-      frameRate,
-      duration: 0,
-    };
+	      frameRate,
+	      duration: 0,
+	      timelineSchemaVersion: 1,
+	    };
     set({ project, mediaAssets: [] });
 
     // Let timelineStore reset its own state
@@ -196,9 +197,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
     try {
       const { useTimelineStore } = await import("./timelineStore");
       useTimelineStore.getState().hydrateFromProject({
-        tracks: payload?.tracks ?? [],
-        clips: payload?.clips ?? [],
-      });
+	        tracks: payload?.tracks ?? [],
+	        clips: payload?.clips ?? [],
+	        transitions: payload?.transitions ?? [],
+	      });
     } catch (err) {
       // On error, reset timeline to empty state
       import("./timelineStore").then(({ useTimelineStore }) => useTimelineStore.getState().hydrateFromProject({ tracks: [], clips: [] })).catch((resetErr) => console.error("[LoadProject] Failed to reset timeline:", resetErr));
@@ -309,10 +311,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       if (project) {
         try {
           const { useTimelineStore } = await import("./timelineStore");
-          const { tracks, clips } = useTimelineStore.getState();
+	          const { tracks, clips, transitions } = useTimelineStore.getState();
 
-          // Convert camelCase to snake_case using centralized serialization
-          const rustProject = toRustProject(project, { tracks, clips, mediaAssets });
+	          // Convert camelCase to snake_case using centralized serialization
+	          const rustProject = toRustProject(project, { tracks, clips, transitions, mediaAssets });
 
           const { invoke } = await import("@tauri-apps/api/core");
           await invoke("save_project", {
@@ -363,10 +365,10 @@ export const useProjectStore = create<ProjectStore>((set, get) => ({
       try {
         // Import timeline store to get tracks and clips
         const { useTimelineStore } = await import("./timelineStore");
-        const { tracks, clips } = useTimelineStore.getState();
+	        const { tracks, clips, transitions } = useTimelineStore.getState();
 
-        // Convert camelCase to snake_case using centralized serialization
-        const rustProject = toRustProject(project, { tracks, clips, mediaAssets });
+	        // Convert camelCase to snake_case using centralized serialization
+	        const rustProject = toRustProject(project, { tracks, clips, transitions, mediaAssets });
 
         const { invoke } = await import("@tauri-apps/api/core");
         await invoke("save_project", {
