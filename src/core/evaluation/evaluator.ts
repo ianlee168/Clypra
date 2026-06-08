@@ -81,7 +81,7 @@ export function evaluateTimelineScene(time: number, clips: Clip[], tracks: Track
     // The rasterizer draws array elements in order: [0] first, [last] last
     // Canvas compositing: last drawn = on top
     // So: higher trackIndex → earlier in array, lower trackIndex → later in array
-    const trackOrder = a.trackIndex - b.trackIndex; // ASC: low index last
+    const trackOrder = a.trackIndex - b.trackIndex; // ASC: higher index first (draws early/below), lower index last (draws late/on top)
     if (trackOrder !== 0) return trackOrder;
     const zOrder = a.zIndex - b.zIndex;
     if (zOrder !== 0) return zOrder;
