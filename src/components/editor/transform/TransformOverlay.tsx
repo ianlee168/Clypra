@@ -391,7 +391,7 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
       // Optimistic preview: update clip for visual feedback during drag
       // Skip epoch increment to avoid cache thrashing
       // The overlay reads from selectedClip (timeline store) for handle positioning
-      updateClip(activeTransform.clipId, { ...newTransform, _skipEpochIncrement: true } as any);
+      updateClip(activeTransform.clipId, { ...newTransform, _skipEpochIncrement: false } as any);
     },
     [isDragging, activeTransform, scale, viewport, canvasWidth, canvasHeight, updateClip, transformController],
   );
