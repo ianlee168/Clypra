@@ -430,7 +430,7 @@ function ActiveModelIndicator() {
 
 export const WhisperSettings: React.FC = () => {
   return (
-    <div className="space-y-6">
+    <div className="space-y-3">
       <div>
         <h3 className="text-[13px] font-semibold uppercase tracking-wider text-(--clypra-muted,#666677) mb-2">Auto-Captions Configuration</h3>
         <p className="text-[11px] text-(--clypra-muted,#666677)">Configure Whisper speech recognition for automatic caption generation.</p>

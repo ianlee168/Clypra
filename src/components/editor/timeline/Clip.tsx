@@ -12,7 +12,6 @@ const MAX_STILL_CLIP_DURATION_SEC = 60 * 60; // 1 hour guardrail for stills
 const MIN_TRIM_DURATION_SEC = 1;
 const traceResize = (...args: unknown[]) => {
   if (!RESIZE_TRACE) return;
-  console.log("[ClipResizeTrace]", ...args);
 };
 
 interface ClipProps {

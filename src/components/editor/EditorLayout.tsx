@@ -16,7 +16,6 @@ import { MobileEditorLayout } from "./MobileEditorLayout";
 import type { MediaAsset } from "@/types";
 import { useUIStore } from "@/store/uiStore";
 import { useAudioLibraryStore } from "@/features/audio-library/store/audioLibraryStore";
-import { convertFileSrc } from "@tauri-apps/api/core";
 
 export const EditorLayout: React.FC = () => {
   const { width } = useWindowSize();
@@ -25,7 +24,7 @@ export const EditorLayout: React.FC = () => {
     return <MobileEditorLayout />;
   }
 
-  const { tracks, clips, addClip, addTrack, insertTrackAt, getTimelineEndTime, createTransitionBetweenClips } = useTimelineStore();
+  const { tracks, clips, addClip, insertTrackAt, getTimelineEndTime, createTransitionBetweenClips } = useTimelineStore();
   const { mediaAssets, project, updateProject, addMediaAsset } = useProjectStore();
   const { selectedClipIds } = useUIStore();
 

@@ -37,26 +37,20 @@ export const MediaCardWaveform: React.FC<MediaCardWaveformProps> = ({ audioPath,
         setIsLoading(true);
         setHasError(false);
 
-        // Log the resolved audio path for debugging
-        console.log("[MediaCardWaveform] Fetching audio from:", audioPath);
-
         // Create audio context
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         const audioContext = new AudioContextClass();
 
         // Fetch and decode audio
         const response = await fetch(audioPath);
-        console.log("[MediaCardWaveform] Fetch response status:", response.status, response.ok);
 
         if (!response.ok) {
           throw new Error(`Failed to fetch audio: ${response.status}`);
         }
 
         const arrayBuffer = await response.arrayBuffer();
-        console.log("[MediaCardWaveform] ArrayBuffer size:", arrayBuffer.byteLength);
 
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
-        console.log("[MediaCardWaveform] Decoded audio successfully:", audioBuffer.duration, "seconds");
 
         if (isCancelled) {
           audioContext.close();

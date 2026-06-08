@@ -161,7 +161,6 @@ class AudioCacheManager {
     // Check if already cached
     if (this.isCached(item.id)) {
       const cached = this.cacheIndex.get(item.id)!;
-      console.log("[AudioCache] Already cached:", item.id);
       return cached;
     }
 
@@ -173,8 +172,6 @@ class AudioCacheManager {
 
       // Use relative path for storage (just CACHE_DIR/filename)
       const relativePath = `${CACHE_DIR}/${fileName}`;
-
-      console.log("[AudioCache] Downloading:", item.audioUrl, "->", relativePath);
 
       // Download file with progress tracking
       const response = await fetch(item.audioUrl);
@@ -242,8 +239,6 @@ class AudioCacheManager {
       this.cacheIndex.set(item.id, cachedFile);
       await this.saveIndex();
 
-      console.log("[AudioCache] Downloaded successfully:", fileName, `(${loaded} bytes)`);
-
       return cachedFile;
     } catch (error) {
       console.error("[AudioCache] Download failed:", error);
@@ -283,8 +278,6 @@ class AudioCacheManager {
       // Remove from index
       this.cacheIndex.delete(itemId);
       await this.saveIndex();
-
-      console.log("[AudioCache] Cleared cache for:", itemId);
     } catch (error) {
       console.error("[AudioCache] Failed to clear cache:", error);
       throw error;
@@ -314,8 +307,6 @@ class AudioCacheManager {
       // Clear index
       this.cacheIndex.clear();
       await this.saveIndex();
-
-      console.log("[AudioCache] Cleared all cache");
     } catch (error) {
       console.error("[AudioCache] Failed to clear all cache:", error);
       throw error;

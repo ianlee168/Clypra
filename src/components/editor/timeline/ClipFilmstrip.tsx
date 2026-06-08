@@ -103,11 +103,8 @@ export function ClipFilmstrip({ clip, mediaAsset, clipWidthPx, pixelsPerSecond, 
 
     // DEFENSIVE: Wait for both canvas AND surface to be ready
     if (!canvas || !surface) {
-      console.log(`[ClipFilmstrip DEBUG] useEffect draw SKIPPED clip=${clip.id} canvasFound=${!!canvas} surfaceFound=${!!surface}`);
       return;
     }
-
-    console.log(`[ClipFilmstrip DEBUG] useEffect draw clip=${clip.id} artifactsCount=${artifacts.length} isFallback=${isFallback} surfaceFound=${!!surface}`);
 
     const dpr = window.devicePixelRatio || 1;
     const layout = {
@@ -120,10 +117,8 @@ export function ClipFilmstrip({ clip, mediaAsset, clipWidthPx, pixelsPerSecond, 
     };
 
     if (artifacts.length > 0) {
-      console.log(`[ClipFilmstrip DEBUG] drawing filmstrip with ${artifacts.length} artifacts`);
       surface.drawFilmstrip(artifacts, layout);
     } else {
-      console.log(`[ClipFilmstrip DEBUG] drawing placeholder/empty`);
       surface.drawPlaceholder(layout);
     }
   }, [artifacts, clipWidthPx, stripHeightPx, tileWidthPx, clip.trimIn, clip.trimOut, clip.id]);

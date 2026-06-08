@@ -171,8 +171,6 @@ const AudioItem: React.FC<AudioItemProps> = ({ item, onAddToTimeline }) => {
 
       // Open in SourcePreview
       previewAsset(mediaAsset);
-
-      console.log("[AudioItem] Preview opened with cached file:", absolutePath);
     } catch (error) {
       console.error("[AudioItem] Preview failed:", error);
     }

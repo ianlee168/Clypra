@@ -168,20 +168,6 @@ export function createTextClip(options: CreateTextClipOptions): TextClip {
     canvasWidth,
   });
 
-  console.log("[createTextClip] Bounding box calculation:", {
-    text,
-    fontSize,
-    styleId,
-    measuredWidth: sizing.measuredWidth,
-    bleed: sizing.bleed,
-    effectDefinition: effectDefinition
-      ? {
-          id: effectDefinition.id,
-          boundingBox: effectDefinition.boundingBox,
-        }
-      : undefined,
-  });
-
   // Calculate position based on preset using the dynamic box sizes
   const { x, y, width, height } = calculateTextPosition(position, canvasWidth, canvasHeight, sizing.width, sizing.height);
 

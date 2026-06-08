@@ -39,7 +39,6 @@ import type { MediaAsset } from "@/types";
 const SELECT_TRACE = import.meta.env.DEV;
 const traceSelect = (...args: unknown[]) => {
   if (!SELECT_TRACE) return;
-  console.log("[SelectTrace][UIStore]", ...args);
 };
 
 interface UIStore {

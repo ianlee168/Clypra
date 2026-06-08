@@ -25,7 +25,6 @@ import type { TransformHandle } from "@/types";
 const SELECT_TRACE = import.meta.env.DEV;
 const traceSelect = (...args: unknown[]) => {
   if (!SELECT_TRACE) return;
-  console.log("[SelectTrace][TransformOverlay]", ...args);
 };
 // const CENTER_GUIDE_SNAP_PX = 8;
 // const CENTER_MAGNET_SNAP_PX = 12;

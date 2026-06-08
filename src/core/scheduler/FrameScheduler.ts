@@ -641,7 +641,6 @@ export class FrameScheduler {
         if (handle) {
           // Mutate the layer to add the resource handle
           (layer as any).resourceHandle = handle;
-          console.log(`[FrameScheduler] Attached handle ${handle} to ${layer.mediaType} layer ${layer.clipId}`);
         } else if (layer.mediaType === "image") {
           console.warn(`[FrameScheduler] No handle found for image layer ${layer.clipId} at ${layer.sourcePath}`);
         }
