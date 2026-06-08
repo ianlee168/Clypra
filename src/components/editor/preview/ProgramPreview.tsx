@@ -398,20 +398,36 @@ export const ProgramPreview: React.FC = () => {
     let isActive = true;
     let isRendering = false;
     let lastJobId: string | null = null;
+    let lastRenderedTime: number = -1;
+    let lastRenderedEpoch: number = -1;
     const GPU_MEMORY_LIMIT_MB = 128;
     const renderLoop = () => {
       if (!isActive) return;
+
+      const state = renderStateRef.current;
+      const timeToRender = state.clock.time;
+      const isPlaying = state.clockState.state === "playing";
+      const timeChanged = timeToRender !== lastRenderedTime;
+      const epochChanged = state.epoch !== lastRenderedEpoch;
+      const needsRender = isPlaying || timeChanged || epochChanged;
+
+      // Only render if something changed or we're playing
+      // This prevents infinite RAF loops when idle
+      if (!needsRender) {
+        rafId = requestAnimationFrame(renderLoop);
+        return;
+      }
+
       rafId = requestAnimationFrame(renderLoop);
       if (isRendering) {
         droppedFramesRef.current++;
         return;
       }
       isRendering = true;
-      const state = renderStateRef.current;
-      const timeToRender = state.clock.time;
+      lastRenderedTime = timeToRender;
+      lastRenderedEpoch = state.epoch;
       scheduler.updateTimeline(state.clips, state.tracks, state.mediaAssets, state.project, state.epoch, state.transitions);
       const qm = qualityManagerRef.current;
-      const isPlaying = state.clockState.state === "playing";
       const qualityTier = qm ? qm.selectTierForInteraction(isPlaying, false, false, state.previewQuality) : PreviewQualityTier.Idle;
       const profile = qm ? qm.getRenderProfile(qualityTier) : { maxWidth: state.canvasWidth, maxHeight: state.canvasHeight, dprScale: state.dpr, useDpr: true };
       if (gpuCache) {
