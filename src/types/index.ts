@@ -88,6 +88,14 @@ export interface Track {
   height: number;
 }
 
+/** Waveform bucket containing peak and RMS amplitude data */
+export interface WaveformBucket {
+  /** Peak amplitude (absolute max) - range [0.0, 1.0] */
+  peak: number;
+  /** RMS amplitude (perceived loudness) - range [0.0, 1.0] */
+  rms: number;
+}
+
 export interface MediaAsset {
   id: string;
   name: string;

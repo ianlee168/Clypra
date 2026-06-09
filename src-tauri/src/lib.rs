@@ -40,6 +40,7 @@ pub fn run() {
             extract_poster_frame,
             extract_audio_artwork,
             extract_audio_track,
+            extract_waveform_data,
             transcribe_audio_local,
             save_project,
             load_project,
