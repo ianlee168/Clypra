@@ -181,23 +181,18 @@ export function useTimelineDrag(containerRef: RefObject<HTMLDivElement | null>) 
 
       const originalLeftPx = Math.round(clip.startTime * pps);
 
-      // Calculate anchor delta for insert/ripple modes only
-      // In free mode, clips don't shift - visualLeftAnchorDelta should be 0
-      // In insert/ripple modes, clips shift to create gaps - calculate offset
-      const { clipDragMode: dragMode } = useTimelineStore.getState();
+      // Calculate anchor delta for ripple mode (always enabled)
+      // Clips are inserted between other clips, creating gaps
       let visualLeftAnchorDelta = 0;
 
-      if (dragMode === "insert" || dragMode === "ripple") {
-        // Calculate what the visual offset would be if we moved clip to tail
-        // WITHOUT actually moving it yet - this is preview-only state
-        const otherClips = trackClips.filter((c) => c.id !== clipId);
-        let tailTime = 0;
-        otherClips.forEach((c) => {
-          tailTime += c.duration;
-        });
-        const leftNewPx = Math.round(tailTime * pps);
-        visualLeftAnchorDelta = originalLeftPx - leftNewPx;
-      }
+      // Calculate what the visual offset would be if we moved clip to tail
+      const otherClips = trackClips.filter((c) => c.id !== clipId);
+      let tailTime = 0;
+      otherClips.forEach((c) => {
+        tailTime += c.duration;
+      });
+      const leftNewPx = Math.round(tailTime * pps);
+      visualLeftAnchorDelta = originalLeftPx - leftNewPx;
 
       const container = containerRef.current;
       let pointerXContentStart = startX;
@@ -333,7 +328,7 @@ export function useTimelineDrag(containerRef: RefObject<HTMLDivElement | null>) 
       return;
     }
 
-    const { pixelsPerSecond: livePps, clipDragMode: dragMode, snapEnabled: snapOn } = useTimelineStore.getState();
+    const { pixelsPerSecond: livePps, snapEnabled: snapOn } = useTimelineStore.getState();
     const pps = Math.max(1, livePps);
     const dragPrimaryPlacement = ds.originalPlacements[ds.draggingClipId ?? ""];
     const dragPrimaryStart = dragPrimaryPlacement?.startTime ?? 0;
@@ -358,55 +353,35 @@ export function useTimelineDrag(containerRef: RefObject<HTMLDivElement | null>) 
       targetStartTime = closest;
     }
 
-    if (dragMode === "insert" || dragMode === "ripple") {
-      const trackMetrics = dragTrackMetricsRef.current.get(targetTrackId) ?? {
-        trackClips: [],
-        prefixWidths: new Float64Array(1),
-        midpoints: new Float64Array(0),
-      };
-      const pointerX = clientX - cr.left + container.scrollLeft;
-      let lo = 0;
-      let hi = trackMetrics.midpoints.length;
-      while (lo < hi) {
-        const mid = (lo + hi) >> 1;
-        const clipMidpoint = trackMetrics.midpoints[mid];
-        if (pointerX < clipMidpoint) hi = mid;
-        else lo = mid + 1;
-      }
-      let insertionIndex = lo;
-      const boundaryMidpoint = trackMetrics.midpoints[Math.max(0, Math.min(trackMetrics.midpoints.length - 1, insertionIndex - 1))];
-      if (Number.isFinite(boundaryMidpoint) && Math.abs(pointerX - boundaryMidpoint) <= BOUNDARY_SNAP_EPSILON_PX && ds.targetTrackId === targetTrackId && ds.insertionIndex !== null) {
-        insertionIndex = ds.insertionIndex;
-      }
-      const gapStartTime = trackMetrics.prefixWidths[Math.max(0, Math.min(trackMetrics.prefixWidths.length - 1, insertionIndex))] / pps;
-      const next: DragState = {
-        ...ds,
-        offsetX,
-        offsetY,
-        isInvalidPosition: false,
-        targetTrackId,
-        insertionIndex,
-        gapStartTime,
-        gapDuration: clip.duration,
-        targetStartTime,
-        willCreateNewTrack: false,
-        newTrackPosition: null,
-      };
-      const visualChanged = Math.abs((next.offsetX ?? 0) - (ds.offsetX ?? 0)) > DRAG_RENDER_EPSILON_PX || Math.abs((next.offsetY ?? 0) - (ds.offsetY ?? 0)) > DRAG_RENDER_EPSILON_PX;
-      const targetChanged = ds.targetTrackId !== next.targetTrackId || ds.targetStartTime !== next.targetStartTime || ds.insertionIndex !== next.insertionIndex || ds.isInvalidPosition !== next.isInvalidPosition || ds.willCreateNewTrack !== next.willCreateNewTrack || ds.newTrackPosition !== next.newTrackPosition;
-      dragStateRef.current = next;
-      if (visualChanged || targetChanged) setDragState(next);
-      return;
+    // Ripple mode: insert clips between other clips
+    const trackMetrics = dragTrackMetricsRef.current.get(targetTrackId) ?? {
+      trackClips: [],
+      prefixWidths: new Float64Array(1),
+      midpoints: new Float64Array(0),
+    };
+    const pointerX = clientX - cr.left + container.scrollLeft;
+    let lo = 0;
+    let hi = trackMetrics.midpoints.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      const clipMidpoint = trackMetrics.midpoints[mid];
+      if (pointerX < clipMidpoint) hi = mid;
+      else lo = mid + 1;
     }
-
+    let insertionIndex = lo;
+    const boundaryMidpoint = trackMetrics.midpoints[Math.max(0, Math.min(trackMetrics.midpoints.length - 1, insertionIndex - 1))];
+    if (Number.isFinite(boundaryMidpoint) && Math.abs(pointerX - boundaryMidpoint) <= BOUNDARY_SNAP_EPSILON_PX && ds.targetTrackId === targetTrackId && ds.insertionIndex !== null) {
+      insertionIndex = ds.insertionIndex;
+    }
+    const gapStartTime = trackMetrics.prefixWidths[Math.max(0, Math.min(trackMetrics.prefixWidths.length - 1, insertionIndex))] / pps;
     const next: DragState = {
       ...ds,
       offsetX,
       offsetY,
       isInvalidPosition: false,
       targetTrackId,
-      insertionIndex: null,
-      gapStartTime: targetStartTime,
+      insertionIndex,
+      gapStartTime,
       gapDuration: clip.duration,
       targetStartTime,
       willCreateNewTrack: false,
@@ -415,9 +390,7 @@ export function useTimelineDrag(containerRef: RefObject<HTMLDivElement | null>) 
     const visualChanged = Math.abs((next.offsetX ?? 0) - (ds.offsetX ?? 0)) > DRAG_RENDER_EPSILON_PX || Math.abs((next.offsetY ?? 0) - (ds.offsetY ?? 0)) > DRAG_RENDER_EPSILON_PX;
     const targetChanged = ds.targetTrackId !== next.targetTrackId || ds.targetStartTime !== next.targetStartTime || ds.insertionIndex !== next.insertionIndex || ds.isInvalidPosition !== next.isInvalidPosition || ds.willCreateNewTrack !== next.willCreateNewTrack || ds.newTrackPosition !== next.newTrackPosition;
     dragStateRef.current = next;
-    if (visualChanged || targetChanged) {
-      setDragState(next);
-    }
+    if (visualChanged || targetChanged) setDragState(next);
   }, [containerRef, currentTime]);
 
   const handleClipDragMove = useCallback(
@@ -508,8 +481,8 @@ export function useTimelineDrag(containerRef: RefObject<HTMLDivElement | null>) 
         return;
       }
 
-      const { pixelsPerSecond: livePps, clipDragMode: dragMode } = useTimelineStore.getState();
-      if ((dragMode === "insert" || dragMode === "ripple") && dragSnapshot.targetTrackId && dragSnapshot.insertionIndex !== null) {
+      const { pixelsPerSecond: livePps } = useTimelineStore.getState();
+      if (dragSnapshot.targetTrackId && dragSnapshot.insertionIndex !== null) {
         const orderedDragged = [...dragSnapshot.draggedClipIds].sort((a, b) => {
           const pa = dragSnapshot.originalPlacements[a];
           const pb = dragSnapshot.originalPlacements[b];
@@ -518,7 +491,8 @@ export function useTimelineDrag(containerRef: RefObject<HTMLDivElement | null>) 
           return a.localeCompare(b);
         });
         orderedDragged.forEach((id, i) => insertClipAtIndex(id, dragSnapshot.targetTrackId!, dragSnapshot.insertionIndex! + i));
-        if (dragMode === "ripple") normalizeTrack(dragSnapshot.targetTrackId);
+        // Ripple mode: always normalize track to close gaps
+        normalizeTrack(dragSnapshot.targetTrackId);
         removeEmptyNonMainTracks(sourceTrackIds);
         dragStateRef.current = null;
         setDragState(null);

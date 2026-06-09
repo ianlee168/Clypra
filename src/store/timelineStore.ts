@@ -52,7 +52,6 @@ interface TimelineStore {
   viewportWidth: number;
   pixelsPerSecond: number;
   rippleEditEnabled: boolean;
-  clipDragMode: "free" | "insert" | "ripple";
   snapEnabled: boolean;
   /** Active snap guides (vertical alignment indicators during resize/drag) */
   snapGuides: Array<{ time: number; type: "clip-start" | "clip-end" | "playhead" }>;
@@ -90,7 +89,6 @@ interface TimelineStore {
   getTimelineEndTime: () => number;
   swapClips: () => { error: string | null };
   toggleRippleEdit: () => void;
-  setClipDragMode: (mode: "free" | "insert" | "ripple") => void;
   toggleSnapEnabled: () => void;
   rippleTrimClip: (clipId: string, side: "left" | "right", deltaTime: number) => void;
   // Sequence-based operations
@@ -131,7 +129,6 @@ export const useTimelineStore = create<TimelineStore>(
     viewportWidth: 1200,
     pixelsPerSecond: TIMELINE_ZOOM_DEFAULT * TIMELINE_PPS_PER_ZOOM,
     rippleEditEnabled: false,
-    clipDragMode: "free",
     snapEnabled: true,
     snapGuides: [],
     _batchDepth: 0,
@@ -568,10 +565,6 @@ export const useTimelineStore = create<TimelineStore>(
 
     toggleRippleEdit: () => {
       set((state) => ({ rippleEditEnabled: !state.rippleEditEnabled }));
-    },
-
-    setClipDragMode: (mode) => {
-      set({ clipDragMode: mode });
     },
 
     toggleSnapEnabled: () => {
