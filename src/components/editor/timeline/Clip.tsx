@@ -501,7 +501,7 @@ const ClipInner: React.FC<ClipProps> = ({ clip, mediaAsset, pixelsPerSecond, sel
   const getClipBackgroundStyle = () => {
     if (isClipText) return {}; // Text clips use className colors
     if (isClipAudio) return { backgroundColor: "var(--color-timeline-clip-audio)" };
-    if (isClipVideo) return { backgroundColor: "var(--color-timeline-clip-video)" };
+    if (isClipVideo) return { backgroundColor: "var(--color-accent)" };
     if (isClipImage) return { backgroundColor: "var(--color-timeline-clip-video)" };
     return { backgroundColor: "var(--color-accent)" }; // Fallback
   };
