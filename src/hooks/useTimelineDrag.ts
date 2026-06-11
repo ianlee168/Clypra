@@ -397,9 +397,12 @@ export function useTimelineDrag(containerRef: RefObject<HTMLDivElement | null>) 
     });
 
     // Snap System - Calculate snap targets (using clip's left edge position)
+    // Pass ALL clips from ALL tracks for cross-track alignment
+    const allClipsForSnapping = liveClips.filter((c) => !ds.draggedClipIds.includes(c.id));
+
     const snapResult = findSnap({
       candidateTime: clipTargetTimeSeconds, // Snap the clip's left edge, not cursor
-      trackClips,
+      trackClips: allClipsForSnapping, // Use all clips instead of just target track clips
       draggedClipIds: ds.draggedClipIds,
       snapEnabled,
       snapThresholdSeconds: SNAP_THRESHOLD_SECONDS,

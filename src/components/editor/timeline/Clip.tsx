@@ -368,30 +368,36 @@ const ClipInner: React.FC<ClipProps> = ({ clip, mediaAsset, pixelsPerSecond, sel
           const maxMediaTime = isStill ? MAX_STILL_CLIP_DURATION_SEC : (mediaAsset?.duration ?? resizeStart.trimOut);
           const maxTrimIn = Math.min(maxMediaTime, resizeStart.trimOut - 0.001);
 
-          // Desired new trimIn based on pointer movement (with snap); clamp instead of freezing.
+          // Calculate minimum start time (collision with previous clip or timeline start)
+          const minStartTimeByPrevClip = prevClipEnd;
+          const minStartTimeByTimeline = 0;
+          const minStartTime = Math.max(minStartTimeByPrevClip, minStartTimeByTimeline);
+
+          // Calculate maximum start time (maintain minimum duration and media bounds)
+          const maxStartTimeByDuration = resizeStart.startTime + resizeStart.duration - minDuration;
+          const maxStartTimeByMedia = resizeStart.startTime + (maxTrimIn - resizeStart.trimIn);
+          const maxStartTime = Math.min(maxStartTimeByDuration, maxStartTimeByMedia);
+
+          // Calculate desired start time with snap adjustment, then clamp to valid range
           const desiredStartTime = resizeStart.startTime + adjustedDeltaTime;
-          const desiredDelta = desiredStartTime - resizeStart.startTime;
+          const newStartTime = Math.max(minStartTime, Math.min(desiredStartTime, maxStartTime));
 
-          // Clamp delta by: timeline start, minimum duration, and media trimIn bounds.
-          const minDelta = Math.max(-resizeStart.startTime, prevClipEnd - resizeStart.startTime);
-          const maxDeltaByDuration = resizeStart.duration - minDuration;
-          const maxDeltaByMedia = maxTrimIn - resizeStart.trimIn;
-          const clampedDelta = Math.max(minDelta, Math.min(desiredDelta, maxDeltaByDuration, maxDeltaByMedia));
-
-          const newStartTime = resizeStart.startTime + clampedDelta;
-          const newDuration = resizeStart.duration - clampedDelta;
-          const newTrimIn = resizeStart.trimIn + clampedDelta;
+          // Calculate new duration and trimIn based on the new start time
+          const clipEndTime = resizeStart.startTime + resizeStart.duration;
+          const newDuration = clipEndTime - newStartTime;
+          const startTimeDelta = newStartTime - resizeStart.startTime;
+          const newTrimIn = resizeStart.trimIn + startTimeDelta;
 
           updateClip(clip.id, {
-            startTime: Math.max(0, newStartTime),
-            duration: Math.max(minDuration, newDuration),
-            trimIn: Math.max(0, Math.min(newTrimIn, maxTrimIn)),
+            startTime: newStartTime,
+            duration: newDuration,
+            trimIn: newTrimIn,
           });
           traceResize("apply-standard-left", {
             clipId: clip.id,
-            newStartTime: Math.max(0, newStartTime),
-            newDuration: Math.max(minDuration, newDuration),
-            newTrimIn: Math.max(0, Math.min(newTrimIn, maxTrimIn)),
+            newStartTime,
+            newDuration,
+            newTrimIn,
           });
         } else {
           // Resize from right (trim out)
@@ -436,6 +442,10 @@ const ClipInner: React.FC<ClipProps> = ({ clip, mediaAsset, pixelsPerSecond, sel
 
       // Clear snap guides when resize ends
       clearSnapGuides();
+
+      // Sync gaps after resize completes
+      const store = useTimelineStore.getState();
+      store.detectAndSyncGaps(clip.trackId);
     };
 
     const handlePointerUp = (e: PointerEvent) => {
