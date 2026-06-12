@@ -7,6 +7,7 @@ import { useProjectStore } from "@/store/projectStore";
 import { useTimelineStore } from "@/store/timelineStore";
 import { CacheSettings } from "@/components/settings/CacheSettings";
 import { WhisperSettings } from "@/components/settings/WhisperSettings";
+import { refitClipsForCanvasChange } from "@/lib/refitClips";
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -393,6 +394,7 @@ function EditorTab() {
       canvasWidth: width,
       canvasHeight: height,
     });
+    refitClipsForCanvasChange(width, height);
   };
 
   return (

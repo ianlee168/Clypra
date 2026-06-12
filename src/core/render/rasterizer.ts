@@ -156,6 +156,16 @@ export async function rasterizeScene(scene: EvaluatedScene, target: RasterTarget
   ctx.save();
   ctx.translate(offsetX, offsetY);
 
+  // Clip all layer rendering to the canvas bounds.
+  // Without this, "cover" and "original" mode clips bleed past the canvas
+  // into the letterbox/pillarbox area. Professional NLEs always clip to canvas.
+  // Guard for test environments where mock canvas contexts may not implement these.
+  if (typeof ctx.beginPath === "function") {
+    ctx.beginPath();
+    ctx.rect(0, 0, scaledCanvasWidth, scaledCanvasHeight);
+    ctx.clip();
+  }
+
   // Rasterize all visual layers with uniform scaling
   for (const layer of scene.visualLayers) {
     // TRACE: Z-order verification (can be removed after validation)

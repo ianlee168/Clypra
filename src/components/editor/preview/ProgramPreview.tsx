@@ -18,6 +18,7 @@ import { PreviewQualityManager, PreviewQualityTier } from "@/lib/preview/Preview
 import { cn } from "@/lib/utils";
 import { AspectRatio } from "@/types";
 import { formatTime } from "@/lib/timeFormatting";
+import { refitClipsForCanvasChange } from "@/lib/refitClips";
 
 import { TelemetryOverlay, type TelemetryStats } from "./TelemetryOverlay";
 import { AspectSelector } from "./AspectSelector";
@@ -222,6 +223,7 @@ export const ProgramPreview: React.FC = () => {
             canvasHeight: originalCanvasDimsRef.current.height,
             aspectRatio: "original",
           });
+          refitClipsForCanvasChange(originalCanvasDimsRef.current.width, originalCanvasDimsRef.current.height);
         }
       } else {
         const dims = CANVAS_DIMENSIONS[p];
@@ -230,6 +232,7 @@ export const ProgramPreview: React.FC = () => {
           canvasHeight: dims.height,
           aspectRatio: p,
         });
+        refitClipsForCanvasChange(dims.width, dims.height);
       }
     },
     [project, updateProject],
