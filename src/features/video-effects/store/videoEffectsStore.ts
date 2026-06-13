@@ -13,6 +13,7 @@ import { VideoEffectManifest, VideoEffectItem, OverlayAsset, EffectPreset, Trans
 import { VideoEffectsApi } from "../api/clypraApi";
 import { videoEffectsCacheManager, type CachedOverlay, type VideoEffectsDownloadProgress } from "@/lib/cache/videoEffectsCache";
 import { filterCacheManager, type CachedFilter, type FilterDownloadProgress } from "@/lib/cache/filterCache";
+import { effectCacheManager, type CachedEffect, type EffectDownloadProgress } from "@/lib/cache/effectCache";
 
 export type VideoEffectsDownloadStatus = "idle" | "downloading" | "completed" | "error";
 
@@ -22,6 +23,7 @@ export interface VideoEffectsDownloadState {
   progress: number; // 0-100
   cachedOverlay?: CachedOverlay;
   cachedFilter?: CachedFilter;
+  cachedEffect?: CachedEffect;
   error?: string;
 }
 
@@ -68,9 +70,16 @@ interface VideoEffectsState {
   getCachedFilter: (filterId: string) => CachedFilter | null;
   clearFilterCache: (filterId: string) => Promise<void>;
 
+  // Effect Cache & Download Actions
+  startEffectDownload: (effect: EffectPreset) => Promise<CachedEffect>;
+  getEffectDownloadState: (effectId: string) => VideoEffectsDownloadState | null;
+  isEffectDownloaded: (effectId: string) => boolean;
+  getCachedEffect: (effectId: string) => CachedEffect | null;
+  clearEffectCache: (effectId: string) => Promise<void>;
+
   // Internal setters for downloads
   _updateDownloadProgress: (itemId: string, progress: number) => void;
-  _setDownloadCompleted: (itemId: string, cachedOverlay?: CachedOverlay, cachedFilter?: CachedFilter) => void;
+  _setDownloadCompleted: (itemId: string, cachedOverlay?: CachedOverlay, cachedFilter?: CachedFilter, cachedEffect?: CachedEffect) => void;
   _setDownloadError: (itemId: string, error: string) => void;
 
   // Favorites
@@ -103,6 +112,8 @@ export const useVideoEffectsStore = create<VideoEffectsState>()(
       initializeCache: async () => {
         try {
           await videoEffectsCacheManager.initialize();
+          await filterCacheManager.initialize();
+          await effectCacheManager.initialize();
 
           // Try loading cached manifest from disk
           const diskManifest = await videoEffectsCacheManager.loadManifestJson();
@@ -111,6 +122,8 @@ export const useVideoEffectsStore = create<VideoEffectsState>()(
           }
 
           const cached = videoEffectsCacheManager.getAllCached();
+          const cachedFilters = filterCacheManager.getAllCached();
+          const cachedEffects = effectCacheManager.getAllCached();
 
           const downloads: Record<string, VideoEffectsDownloadState> = { ...get().downloads };
           const overlayURLs = new Map(get().overlayURLs);
@@ -119,6 +132,7 @@ export const useVideoEffectsStore = create<VideoEffectsState>()(
           const { convertFileSrc } = await import("@tauri-apps/api/core");
           const appCache = await appCacheDir();
 
+          // Load overlay cache
           for (const file of cached) {
             const absolutePath = await join(appCache, file.localPath);
             const localUrl = convertFileSrc(absolutePath);
@@ -131,6 +145,26 @@ export const useVideoEffectsStore = create<VideoEffectsState>()(
             };
 
             overlayURLs.set(file.id, localUrl);
+          }
+
+          // Load filter cache
+          for (const filter of cachedFilters) {
+            downloads[filter.id] = {
+              itemId: filter.id,
+              status: "completed",
+              progress: 100,
+              cachedFilter: filter,
+            };
+          }
+
+          // Load effect cache
+          for (const effect of cachedEffects) {
+            downloads[effect.id] = {
+              itemId: effect.id,
+              status: "completed",
+              progress: 100,
+              cachedEffect: effect,
+            };
           }
 
           set({ downloads, overlayURLs });
@@ -366,7 +400,7 @@ export const useVideoEffectsStore = create<VideoEffectsState>()(
         });
       },
 
-      _setDownloadCompleted: (itemId: string, cachedOverlay?: CachedOverlay, cachedFilter?: CachedFilter) => {
+      _setDownloadCompleted: (itemId: string, cachedOverlay?: CachedOverlay, cachedFilter?: CachedFilter, cachedEffect?: CachedEffect) => {
         const { downloads } = get();
         if (!downloads[itemId]) return;
         set({
@@ -378,6 +412,7 @@ export const useVideoEffectsStore = create<VideoEffectsState>()(
               progress: 100,
               cachedOverlay,
               cachedFilter,
+              cachedEffect,
             },
           },
         });
@@ -539,6 +574,94 @@ export const useVideoEffectsStore = create<VideoEffectsState>()(
         get().clearDownloadState(filterId);
       },
 
+      // ============================================================================
+      // EFFECT DOWNLOAD & CACHE METHODS
+      // ============================================================================
+
+      // Start downloading an effect to disk
+      startEffectDownload: async (effect: EffectPreset): Promise<CachedEffect> => {
+        const { downloads } = get();
+
+        // Check if already completed
+        if (effectCacheManager.isCached(effect.id)) {
+          const cached = effectCacheManager.getCached(effect.id)!;
+          return cached;
+        }
+
+        if (downloads[effect.id]?.status === "downloading") {
+          // If already downloading, wait for it
+          const checkCompletion = (): Promise<CachedEffect> => {
+            return new Promise((resolve, reject) => {
+              const unsubscribe = useVideoEffectsStore.subscribe((state) => {
+                const dl = state.downloads[effect.id];
+                if (dl?.status === "completed" && dl.cachedEffect) {
+                  unsubscribe();
+                  resolve(dl.cachedEffect);
+                } else if (dl?.status === "error") {
+                  unsubscribe();
+                  reject(new Error(dl.error || "Download failed"));
+                }
+              });
+            });
+          };
+          return checkCompletion();
+        }
+
+        set({
+          downloads: {
+            ...downloads,
+            [effect.id]: {
+              itemId: effect.id,
+              status: "downloading",
+              progress: 0,
+            },
+          },
+        });
+
+        try {
+          const cachedEffect = await effectCacheManager.downloadEffect(effect, (progress) => {
+            get()._updateDownloadProgress(effect.id, progress.percentage);
+          });
+
+          get()._setDownloadCompleted(effect.id, undefined, undefined, cachedEffect);
+          return cachedEffect;
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : "Download failed";
+          get()._setDownloadError(effect.id, errorMessage);
+          throw error;
+        }
+      },
+
+      getEffectDownloadState: (effectId: string) => {
+        const state = get().downloads[effectId];
+        if (state) return state;
+
+        if (effectCacheManager.isCached(effectId)) {
+          const cached = effectCacheManager.getCached(effectId)!;
+          return {
+            itemId: effectId,
+            status: "completed",
+            progress: 100,
+            cachedEffect: cached,
+          };
+        }
+
+        return null;
+      },
+
+      isEffectDownloaded: (effectId: string) => {
+        return effectCacheManager.isCached(effectId);
+      },
+
+      getCachedEffect: (effectId: string) => {
+        return effectCacheManager.getCached(effectId);
+      },
+
+      clearEffectCache: async (effectId: string) => {
+        await effectCacheManager.clearCache(effectId);
+        get().clearDownloadState(effectId);
+      },
+
       // Favorites
       addFavorite: (id: string) => {
         set((state) => {
@@ -573,6 +696,7 @@ export const useVideoEffectsStore = create<VideoEffectsState>()(
       clearAllLocalCaches: async () => {
         await videoEffectsCacheManager.clearAllCache();
         await filterCacheManager.clearAllCache();
+        await effectCacheManager.clearAllCache();
         VideoEffectsApi.clearLocalCache();
 
         set({
@@ -597,6 +721,7 @@ export const useVideoEffectsStore = create<VideoEffectsState>()(
         const apiStats = VideoEffectsApi.getCacheStats();
         const diskStats = videoEffectsCacheManager.getCacheStats();
         const filterStats = filterCacheManager.getCacheStats();
+        const effectStats = effectCacheManager.getCacheStats();
 
         return {
           ...apiStats,
@@ -604,6 +729,8 @@ export const useVideoEffectsStore = create<VideoEffectsState>()(
           diskSize: diskStats.totalSize,
           filterCount: filterStats.count,
           filterSize: filterStats.totalSize,
+          effectCount: effectStats.count,
+          effectSize: effectStats.totalSize,
         };
       },
     }),
