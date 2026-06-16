@@ -22,7 +22,7 @@ import type { MediaAsset } from "@/types";
 import { useAudioLibraryStore } from "@/features/audio-library/store/audioLibraryStore";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { useStickersStore } from "@/features/stickers/store/stickersStore";
-import { useVideoEffectsStore } from "@/features/video-effects/store/videoEffectsStore";
+import { filterCacheManager } from "@/features/filters/cache/filterCache";
 
 export const MobileEditorLayout: React.FC = () => {
   const { tracks, clips, addClip, addTrack, insertTrackAt, getTimelineEndTime, createTransitionBetweenClips } = useTimelineStore();
@@ -290,7 +290,7 @@ export const MobileEditorLayout: React.FC = () => {
       }
     } else if (type === "filters") {
       // Filter must be downloaded first
-      const cachedFilter = useVideoEffectsStore.getState().getCachedFilter(item.id);
+      const cachedFilter = filterCacheManager.getCached(item.id);
 
       if (!cachedFilter) {
         console.error("[MobileEditorLayout] Filter not downloaded yet:", item.id);

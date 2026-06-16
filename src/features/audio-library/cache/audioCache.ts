@@ -1,13 +1,13 @@
 /**
- * Overlay Cache Manager
- * Handles downloading and caching animated overlay video files
+ * Audio Cache Manager
+ * Handles downloading and caching audio files from the library API
  */
 
 import { BaseDirectory, exists, mkdir, writeFile, readFile, remove, readDir } from "@tauri-apps/plugin-fs";
 import { join, appCacheDir } from "@tauri-apps/api/path";
-import type { OverlayAsset } from "@/features/video-effects/types";
+import type { AudioLibraryItem } from "@/features/audio-library/api/audioLibraryApi";
 
-export interface CachedOverlay {
+export interface CachedAudioFile {
   id: string;
   localPath: string;
   originalUrl: string;
@@ -17,20 +17,17 @@ export interface CachedOverlay {
   metadata: {
     duration: number;
     format: string;
-    width?: number;
-    height?: number;
-    defaultOpacity: number;
-    blendMode: string;
+    bitrate?: number;
   };
 }
 
-export interface OverlayDownloadProgress {
+export interface DownloadProgress {
   loaded: number;
   total: number;
   percentage: number;
 }
 
-const CACHE_DIR = "overlays";
+const CACHE_DIR = "audio-library";
 const CACHE_INDEX_FILE = "index.json";
 
 /**
@@ -44,18 +41,18 @@ function sanitizeFileName(name: string): string {
 }
 
 /**
- * Get file extension from URL or default to webm
+ * Get file extension from URL or default to mp3
  */
 function getFileExtension(url: string): string {
   const match = url.match(/\.([a-zA-Z0-9]+)(?:\?|$)/);
-  return match ? match[1] : "webm";
+  return match ? match[1] : "mp3";
 }
 
 /**
- * OverlayCacheManager - Singleton for managing overlay video cache
+ * AudioCacheManager - Singleton for managing audio file cache
  */
-class OverlayCacheManager {
-  private cacheIndex: Map<string, CachedOverlay> = new Map();
+class AudioCacheManager {
+  private cacheIndex: Map<string, CachedAudioFile> = new Map();
   private cacheDir: string | null = null;
   private initialized = false;
 
@@ -76,17 +73,17 @@ class OverlayCacheManager {
         await mkdir(this.cacheDir, { baseDir: BaseDirectory.AppCache, recursive: true });
       }
 
-      // Load cache index from disk
+      // Load cache index
       await this.loadIndex();
       this.initialized = true;
     } catch (error) {
-      console.error("[OverlayCache] Failed to initialize:", error);
-      throw new Error("Failed to initialize overlay cache");
+      console.error("[AudioCache] Failed to initialize:", error);
+      throw new Error("Failed to initialize audio cache");
     }
   }
 
   /**
-   * Load cache index from disk and verify files still exist
+   * Load cache index from disk
    */
   private async loadIndex(): Promise<void> {
     if (!this.cacheDir) return;
@@ -98,30 +95,15 @@ class OverlayCacheManager {
       if (indexExists) {
         const indexData = await readFile(indexPath, { baseDir: BaseDirectory.AppCache });
         const indexJson = new TextDecoder().decode(indexData);
-        const indexArray: CachedOverlay[] = JSON.parse(indexJson);
+        const indexArray: CachedAudioFile[] = JSON.parse(indexJson);
 
         this.cacheIndex.clear();
-
-        // Verify each cached file still exists on disk before trusting the index
-        const appCache = await appCacheDir();
-        for (const entry of indexArray) {
-          try {
-            const filePath = await join(appCache, entry.localPath);
-            const fileExists = await exists(filePath, { baseDir: BaseDirectory.AppCache });
-            if (fileExists) {
-              this.cacheIndex.set(entry.id, entry);
-            } else {
-              console.warn(`[OverlayCache] Index entry exists but file missing: ${entry.id}`);
-            }
-          } catch (err) {
-            console.warn(`[OverlayCache] Failed to verify file for ${entry.id}:`, err);
-          }
-        }
-
-        console.log(`[OverlayCache] Loaded ${this.cacheIndex.size} cached overlays from disk`);
+        indexArray.forEach((item) => {
+          this.cacheIndex.set(item.id, item);
+        });
       }
     } catch (error) {
-      console.warn("[OverlayCache] Failed to load index, starting fresh:", error);
+      console.warn("[AudioCache] Failed to load index, starting fresh:", error);
       this.cacheIndex.clear();
     }
   }
@@ -140,36 +122,36 @@ class OverlayCacheManager {
 
       await writeFile(indexPath, indexData, { baseDir: BaseDirectory.AppCache });
     } catch (error) {
-      console.error("[OverlayCache] Failed to save index:", error);
+      console.error("[AudioCache] Failed to save index:", error);
     }
   }
 
   /**
-   * Check if overlay is already cached
+   * Check if audio is already cached
    */
-  isCached(overlayId: string): boolean {
-    return this.cacheIndex.has(overlayId);
+  isCached(itemId: string): boolean {
+    return this.cacheIndex.has(itemId);
   }
 
   /**
-   * Get cached overlay info
+   * Get cached file info
    */
-  getCached(overlayId: string): CachedOverlay | null {
-    return this.cacheIndex.get(overlayId) || null;
+  getCached(itemId: string): CachedAudioFile | null {
+    return this.cacheIndex.get(itemId) || null;
   }
 
   /**
-   * Get cached overlay path
+   * Get cached file path
    */
-  getCachedPath(overlayId: string): string | null {
-    const cached = this.cacheIndex.get(overlayId);
+  getCachedPath(itemId: string): string | null {
+    const cached = this.cacheIndex.get(itemId);
     return cached ? cached.localPath : null;
   }
 
   /**
-   * Download overlay video to cache
+   * Download audio file to cache
    */
-  async downloadOverlay(overlay: OverlayAsset, onProgress?: (progress: OverlayDownloadProgress) => void): Promise<CachedOverlay> {
+  async downloadAudio(item: AudioLibraryItem, onProgress?: (progress: DownloadProgress) => void): Promise<CachedAudioFile> {
     await this.initialize();
 
     if (!this.cacheDir) {
@@ -177,22 +159,22 @@ class OverlayCacheManager {
     }
 
     // Check if already cached
-    if (this.isCached(overlay.id)) {
-      const cached = this.cacheIndex.get(overlay.id)!;
+    if (this.isCached(item.id)) {
+      const cached = this.cacheIndex.get(item.id)!;
       return cached;
     }
 
     try {
       // Generate filename
-      const ext = getFileExtension(overlay.url);
-      const sanitizedName = sanitizeFileName(overlay.name);
-      const fileName = `${overlay.id}_${sanitizedName}.${ext}`;
+      const ext = getFileExtension(item.audioUrl);
+      const sanitizedName = sanitizeFileName(item.name);
+      const fileName = `${item.id}_${sanitizedName}.${ext}`;
 
       // Use relative path for storage (just CACHE_DIR/filename)
       const relativePath = `${CACHE_DIR}/${fileName}`;
 
       // Download file with progress tracking
-      const response = await fetch(overlay.url);
+      const response = await fetch(item.audioUrl);
 
       if (!response.ok) {
         throw new Error(`HTTP ${response.status}: ${response.statusText}`);
@@ -239,54 +221,51 @@ class OverlayCacheManager {
       await writeFile(relativePath, fileData, { baseDir: BaseDirectory.AppCache });
 
       // Create cache entry with relative path
-      const cachedOverlay: CachedOverlay = {
-        id: overlay.id,
+      const cachedFile: CachedAudioFile = {
+        id: item.id,
         localPath: relativePath, // Store relative path, not absolute
-        originalUrl: overlay.url,
+        originalUrl: item.audioUrl,
         fileName,
         size: loaded,
         downloadedAt: Date.now(),
         metadata: {
-          duration: overlay.duration,
+          duration: item.duration,
           format: ext,
-          width: overlay.width,
-          height: overlay.height,
-          defaultOpacity: overlay.recommended?.opacity || 1.0,
-          blendMode: overlay.recommended?.blendMode || overlay.blendMode || "normal",
+          bitrate: undefined,
         },
       };
 
       // Update index
-      this.cacheIndex.set(overlay.id, cachedOverlay);
+      this.cacheIndex.set(item.id, cachedFile);
       await this.saveIndex();
 
-      return cachedOverlay;
+      return cachedFile;
     } catch (error) {
-      console.error("[OverlayCache] Download failed:", error);
-      throw new Error(`Failed to download overlay: ${error instanceof Error ? error.message : "Unknown error"}`);
+      console.error("[AudioCache] Download failed:", error);
+      throw new Error(`Failed to download audio: ${error instanceof Error ? error.message : "Unknown error"}`);
     }
   }
 
   /**
-   * Ensure overlay is downloaded (convenience method)
+   * Ensure audio is downloaded (convenience method)
    */
-  async ensureDownloaded(overlay: OverlayAsset, onProgress?: (progress: OverlayDownloadProgress) => void): Promise<CachedOverlay> {
+  async ensureDownloaded(item: AudioLibraryItem, onProgress?: (progress: DownloadProgress) => void): Promise<CachedAudioFile> {
     await this.initialize();
 
-    if (this.isCached(overlay.id)) {
-      return this.cacheIndex.get(overlay.id)!;
+    if (this.isCached(item.id)) {
+      return this.cacheIndex.get(item.id)!;
     }
 
-    return this.downloadOverlay(overlay, onProgress);
+    return this.downloadAudio(item, onProgress);
   }
 
   /**
-   * Clear specific cached overlay
+   * Clear specific cached file
    */
-  async clearCache(overlayId: string): Promise<void> {
+  async clearCache(itemId: string): Promise<void> {
     await this.initialize();
 
-    const cached = this.cacheIndex.get(overlayId);
+    const cached = this.cacheIndex.get(itemId);
     if (!cached) return;
 
     try {
@@ -297,16 +276,16 @@ class OverlayCacheManager {
       }
 
       // Remove from index
-      this.cacheIndex.delete(overlayId);
+      this.cacheIndex.delete(itemId);
       await this.saveIndex();
     } catch (error) {
-      console.error("[OverlayCache] Failed to clear cache:", error);
+      console.error("[AudioCache] Failed to clear cache:", error);
       throw error;
     }
   }
 
   /**
-   * Clear all cached overlay files
+   * Clear all cached audio files
    */
   async clearAllCache(): Promise<void> {
     await this.initialize();
@@ -329,7 +308,7 @@ class OverlayCacheManager {
       this.cacheIndex.clear();
       await this.saveIndex();
     } catch (error) {
-      console.error("[OverlayCache] Failed to clear all cache:", error);
+      console.error("[AudioCache] Failed to clear all cache:", error);
       throw error;
     }
   }
@@ -337,7 +316,7 @@ class OverlayCacheManager {
   /**
    * Get cache statistics
    */
-  getCacheStats(): { count: number; totalSize: number; items: CachedOverlay[] } {
+  getCacheStats(): { count: number; totalSize: number; items: CachedAudioFile[] } {
     const items = Array.from(this.cacheIndex.values());
     const totalSize = items.reduce((sum, item) => sum + item.size, 0);
 
@@ -349,12 +328,12 @@ class OverlayCacheManager {
   }
 
   /**
-   * Get all cached overlays
+   * Get all cached items
    */
-  getAllCached(): CachedOverlay[] {
+  getAllCached(): CachedAudioFile[] {
     return Array.from(this.cacheIndex.values());
   }
 }
 
 // Singleton instance
-export const overlayCacheManager = new OverlayCacheManager();
+export const audioCacheManager = new AudioCacheManager();

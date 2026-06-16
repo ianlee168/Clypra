@@ -121,25 +121,6 @@ export interface VideoExportResult {
 export async function exportVideo(config: VideoExportConfig): Promise<VideoExportResult> {
   const { clips, tracks, transitions = [], assets, project, epoch, startTime, endTime, outputPath, frameRate = project?.frameRate || 30, width = project?.canvasWidth || 1920, height = project?.canvasHeight || 1080, codec = "h264", preset = "medium", crf = 23, pixelFormat = "yuv420p", onProgress } = config;
 
-  // ============================================================================
-  // PRE-EXPORT VALIDATION: Verify all animated overlay clips are cached
-  // ============================================================================
-  const { overlayCacheManager } = await import("@/lib/cache/overlayCache");
-  await overlayCacheManager.initialize();
-
-  const overlayClips = clips.filter((clip) => clip.kind === "animated-overlay");
-  const uncachedOverlays: string[] = [];
-
-  for (const overlayClip of overlayClips) {
-    if (!overlayCacheManager.isCached(overlayClip.mediaId)) {
-      uncachedOverlays.push(overlayClip.name || overlayClip.mediaId);
-    }
-  }
-
-  if (uncachedOverlays.length > 0) {
-    throw new Error(`Cannot export: ${uncachedOverlays.length} overlay${uncachedOverlays.length > 1 ? "s are" : " is"} not downloaded. ` + `Please wait for downloads to complete: ${uncachedOverlays.slice(0, 3).join(", ")}${uncachedOverlays.length > 3 ? "..." : ""}`);
-  }
-
   const startTimeMs = Date.now();
 
   // Calculate frame times deterministically without floating-point accumulation
@@ -263,53 +244,6 @@ export async function exportVideo(config: VideoExportConfig): Promise<VideoExpor
         } catch (error) {
           console.warn(`Failed to acquire video for ${key}:`, error);
           // Continue without this video - rasterizer will use fallback
-        }
-      }
-
-      // Find all animated overlay clips active at this time
-      const { appCacheDir, join } = await import("@tauri-apps/api/path");
-      const appCache = await appCacheDir();
-
-      for (const clip of clips) {
-        if (clip.kind !== "animated-overlay") continue;
-
-        // Check if overlay is active at this time
-        const clipEnd = clip.startTime + clip.duration;
-        if (time < clip.startTime || time >= clipEnd) continue;
-
-        // Get cached overlay info
-        const cachedOverlay = overlayCacheManager.getCached(clip.mediaId);
-        if (!cachedOverlay) {
-          console.warn(`Overlay not cached during export: ${clip.mediaId} - skipping frame`);
-          continue;
-        }
-
-        // Calculate source time with looping
-        const clipLocalTime = time - clip.startTime;
-        const trimIn = clip.trimIn || 0;
-        const trimOut = clip.trimOut ?? cachedOverlay.metadata.duration;
-        const overlayDuration = trimOut - trimIn;
-
-        // Apply looping if enabled
-        let rawSourceTime = trimIn + (clipLocalTime % overlayDuration);
-
-        // Clamp to valid range
-        const frameTime = 1 / frameRate;
-        const sourceTime = Math.min(rawSourceTime, trimOut - frameTime);
-
-        // Resolve local cached path
-        const absolutePath = await join(appCache, cachedOverlay.localPath);
-        const resolvedPath = convertFileSrc(absolutePath);
-
-        // Acquire overlay video element
-        const key = `overlay-${clip.id}`;
-        try {
-          const overlayVideo = await videoPool.acquire(resolvedPath, sourceTime);
-          videoElements.set(key, overlayVideo);
-          frameVideoElements.push(overlayVideo);
-        } catch (error) {
-          console.warn(`Failed to acquire overlay video for ${key}:`, error);
-          // Continue without this overlay
         }
       }
 

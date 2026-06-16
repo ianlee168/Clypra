@@ -244,7 +244,7 @@ export async function rasterizeScene(scene: EvaluatedScene, target: RasterTarget
         ctx.setTransform(1, 0, 0, 1, 0, 0);
 
         // Import TransitionRenderer from features/video-effects
-        const { TransitionRenderer } = await import("@/features/video-effects/renderers/TransitionRenderer");
+        const { TransitionRenderer } = await import("@/features/transitions/TransitionRenderer");
 
         // Render transition
         TransitionRenderer.render(ctx as any, frames.fromCanvas as any, frames.toCanvas as any, tInfo.transition.type, {}, tInfo.transition.progress);
@@ -380,7 +380,7 @@ async function rasterizeMediaLayer(ctx: CanvasRenderingContext2D | OffscreenCanv
           }
 
           try {
-            const { stickerCacheManager } = await import("@/lib/cache/stickerCache");
+            const { stickerCacheManager } = await import("@/features/stickers/cache/stickerCache");
             const { appCacheDir, join } = await import("@tauri-apps/api/path");
             const appCache = await appCacheDir();
             const absoluteLottiePath = await join(appCache, cachedSticker.localAnimationPath!);
