@@ -24,19 +24,19 @@ function convertConfigToDefinition(preset: any): EffectDefinitionWithBounds {
 
   // Font
   const font = {
-    family: cfg.fontFamily || "Poppins",
-    weight: cfg.fontWeight || 700,
-    style: (cfg.fontStyle || "normal") as "normal" | "italic",
-    letterSpacing: cfg.letterSpacing || 0,
-    lineHeight: cfg.lineHeight || 1.2,
+    family: cfg.fontFamily ?? "Poppins",
+    weight: cfg.fontWeight ?? 700,
+    style: (cfg.fontStyle ?? "normal") as "normal" | "italic",
+    letterSpacing: cfg.letterSpacing ?? 0,
+    lineHeight: cfg.lineHeight ?? 1.2,
   };
 
   // Fills
   const fills = [];
   if (cfg.fillType !== "none") {
     fills.push({
-      type: cfg.fillType || "solid",
-      color: cfg.fillColor || "#FFFFFF",
+      type: cfg.fillType ?? "solid",
+      color: cfg.fillColor ?? "#FFFFFF",
       gradient: cfg.fillGradientStops
         ? {
             angle: cfg.fillGradientAngle ?? 90,
@@ -53,13 +53,13 @@ function convertConfigToDefinition(preset: any): EffectDefinitionWithBounds {
   const strokes = [];
   if (cfg.strokeEnabled) {
     strokes.push({
-      color: cfg.strokeColor || "#000000",
-      width: cfg.strokeWidth || 0,
-      position: cfg.strokePosition || "outside",
-      opacity: cfg.strokeOpacity || 100,
-      lineJoin: cfg.strokeLineJoin || "round",
-      blur: cfg.strokeBlur || 0,
-      type: cfg.strokeType || "single",
+      color: cfg.strokeColor ?? "#000000",
+      width: cfg.strokeWidth ?? 0,
+      position: cfg.strokePosition ?? "outside",
+      opacity: cfg.strokeOpacity ?? 100,
+      lineJoin: cfg.strokeLineJoin ?? "round",
+      blur: cfg.strokeBlur ?? 0,
+      type: cfg.strokeType ?? "single",
       colorSecondary: cfg.strokeColorSecondary,
       widthSecondary: cfg.strokeWidthSecondary,
       fadeRange: cfg.strokeFadeRange,
@@ -70,12 +70,12 @@ function convertConfigToDefinition(preset: any): EffectDefinitionWithBounds {
   const shadows = [];
   if (cfg.shadowEnabled) {
     shadows.push({
-      color: cfg.shadowColor || "#000000",
-      blur: cfg.shadowBlur || 0,
-      offsetX: cfg.shadowOffsetX || 0,
-      offsetY: cfg.shadowOffsetY || 0,
-      opacity: cfg.shadowOpacity || 80,
-      type: cfg.shadowType || "drop",
+      color: cfg.shadowColor ?? "#000000",
+      blur: cfg.shadowBlur ?? 0,
+      offsetX: cfg.shadowOffsetX ?? 0,
+      offsetY: cfg.shadowOffsetY ?? 0,
+      opacity: cfg.shadowOpacity ?? 80,
+      type: cfg.shadowType ?? "drop",
     });
   }
 
@@ -83,19 +83,19 @@ function convertConfigToDefinition(preset: any): EffectDefinitionWithBounds {
   let bevel = undefined;
   if (cfg.bevelEnabled) {
     bevel = {
-      depth: cfg.bevelDepth || 5,
-      highlightColor: cfg.bevelHighlight || "#FFFFFF",
-      shadowColor: cfg.bevelShadow || "#000000",
-      direction: cfg.bevelDirection || "bottom-right",
-      coreColor: cfg.bevelCoreColor || "#000000",
-      edgeColor: cfg.bevelEdgeColor || "#2A2A38",
-      edgeWidth: cfg.bevelEdgeWidth || 0,
-      blur: cfg.bevelBlur || 0,
-      blurColor: cfg.bevelBlurColor || "#000000",
-      perspectiveEnabled: cfg.bevelPerspectiveEnabled || false,
-      vanishingPointX: cfg.bevelVanishingPointX || 40,
-      vanishingPointY: cfg.bevelVanishingPointY || 80,
-      focalLength: cfg.bevelFocalLength || 400,
+      depth: cfg.bevelDepth ?? 5,
+      highlightColor: cfg.bevelHighlight ?? "#FFFFFF",
+      shadowColor: cfg.bevelShadow ?? "#000000",
+      direction: cfg.bevelDirection ?? "bottom-right",
+      coreColor: cfg.bevelCoreColor ?? "#000000",
+      edgeColor: cfg.bevelEdgeColor ?? "#2A2A38",
+      edgeWidth: cfg.bevelEdgeWidth ?? 0,
+      blur: cfg.bevelBlur ?? 0,
+      blurColor: cfg.bevelBlurColor ?? "#000000",
+      perspectiveEnabled: cfg.bevelPerspectiveEnabled ?? false,
+      vanishingPointX: cfg.bevelVanishingPointX ?? 40,
+      vanishingPointY: cfg.bevelVanishingPointY ?? 80,
+      focalLength: cfg.bevelFocalLength ?? 400,
     };
   }
 
@@ -118,15 +118,15 @@ function convertConfigToDefinition(preset: any): EffectDefinitionWithBounds {
   let panel = undefined;
   if (cfg.panelEnabled) {
     panel = {
-      color: cfg.panelColor || "#1E1E26",
-      opacity: cfg.panelOpacity || 80,
-      radius: cfg.panelRadius || 12,
-      paddingX: cfg.panelPaddingX || 40,
-      paddingY: cfg.panelPaddingY || 20,
+      color: cfg.panelColor ?? "#1E1E26",
+      opacity: cfg.panelOpacity ?? 80,
+      radius: cfg.panelRadius ?? 12,
+      paddingX: cfg.panelPaddingX ?? 40,
+      paddingY: cfg.panelPaddingY ?? 20,
       stroke: cfg.panelStrokeEnabled
         ? {
-            color: cfg.panelStrokeColor || "#2A2A38",
-            width: cfg.panelStrokeWidth || 2,
+            color: cfg.panelStrokeColor ?? "#2A2A38",
+            width: cfg.panelStrokeWidth ?? 2,
           }
         : undefined,
     };
@@ -136,10 +136,10 @@ function convertConfigToDefinition(preset: any): EffectDefinitionWithBounds {
   let stack = undefined;
   if (cfg.stackEnabled) {
     stack = {
-      count: cfg.stackCount || 3,
-      offsetX: cfg.stackOffsetX || 10,
-      offsetY: cfg.stackOffsetY || -10,
-      opacityDecay: cfg.stackOpacityDecay || 20,
+      count: cfg.stackCount ?? 3,
+      offsetX: cfg.stackOffsetX ?? 10,
+      offsetY: cfg.stackOffsetY ?? -10,
+      opacityDecay: cfg.stackOpacityDecay ?? 20,
       color1: cfg.stackColor1,
       color2: cfg.stackColor2,
       color3: cfg.stackColor3,
@@ -148,11 +148,12 @@ function convertConfigToDefinition(preset: any): EffectDefinitionWithBounds {
   }
 
   return {
+    ...cfg,
     id: preset.id,
     name: preset.name,
     category: preset.category,
-    description: "",
-    tags: [],
+    description: preset.description ?? cfg.description ?? "",
+    tags: preset.tags ?? cfg.tags ?? [],
     boundingBox: calculateBoundingBox(cfg),
     font,
     fills,
@@ -185,8 +186,8 @@ function calculateBoundingBox(cfg: TextEffectConfig): BoundingBoxSpec {
     const strokeWidth = cfg.panelStrokeEnabled ? cfg.panelStrokeWidth || 0 : 0;
     return {
       mode: "panel",
-      paddingX: (cfg.panelPaddingX || 0) + strokeWidth,
-      paddingY: (cfg.panelPaddingY || 0) + strokeWidth,
+      paddingX: (cfg.panelPaddingX ?? 0) + strokeWidth,
+      paddingY: (cfg.panelPaddingY ?? 0) + strokeWidth,
     };
   }
 
@@ -194,34 +195,34 @@ function calculateBoundingBox(cfg: TextEffectConfig): BoundingBoxSpec {
   let paddingY = 0;
 
   if (cfg.strokeEnabled) {
-    paddingX = Math.max(paddingX, cfg.strokeWidth || 0);
-    paddingY = Math.max(paddingY, cfg.strokeWidth || 0);
-    paddingX += cfg.strokeBlur || 0;
-    paddingY += cfg.strokeBlur || 0;
+    paddingX = Math.max(paddingX, cfg.strokeWidth ?? 0);
+    paddingY = Math.max(paddingY, cfg.strokeWidth ?? 0);
+    paddingX += cfg.strokeBlur ?? 0;
+    paddingY += cfg.strokeBlur ?? 0;
   }
 
   if (cfg.shadowEnabled) {
-    paddingX = Math.max(paddingX, Math.abs(cfg.shadowOffsetX || 0) + (cfg.shadowBlur || 0));
-    paddingY = Math.max(paddingY, Math.abs(cfg.shadowOffsetY || 0) + (cfg.shadowBlur || 0));
+    paddingX = Math.max(paddingX, Math.abs(cfg.shadowOffsetX ?? 0) + (cfg.shadowBlur ?? 0));
+    paddingY = Math.max(paddingY, Math.abs(cfg.shadowOffsetY ?? 0) + (cfg.shadowBlur ?? 0));
   }
 
   cfg.glowLayers?.forEach((glow) => {
     if (!glow.enabled) return;
-    const glowPadding = (glow.blur || 0) + (glow.spread || 0);
+    const glowPadding = (glow.blur ?? 0) + (glow.spread ?? 0);
     paddingX = Math.max(paddingX, glowPadding);
     paddingY = Math.max(paddingY, glowPadding);
   });
 
   if (cfg.bevelEnabled) {
-    paddingX = Math.max(paddingX, cfg.bevelDepth || 0);
-    paddingY = Math.max(paddingY, cfg.bevelDepth || 0);
-    paddingX += cfg.bevelBlur || 0;
-    paddingY += cfg.bevelBlur || 0;
+    paddingX = Math.max(paddingX, cfg.bevelDepth ?? 0);
+    paddingY = Math.max(paddingY, cfg.bevelDepth ?? 0);
+    paddingX += cfg.bevelBlur ?? 0;
+    paddingY += cfg.bevelBlur ?? 0;
   }
 
   if (cfg.stackEnabled) {
-    paddingX = Math.max(paddingX, Math.abs((cfg.stackOffsetX || 0) * (cfg.stackCount || 1)));
-    paddingY = Math.max(paddingY, Math.abs((cfg.stackOffsetY || 0) * (cfg.stackCount || 1)));
+    paddingX = Math.max(paddingX, Math.abs((cfg.stackOffsetX ?? 0) * (cfg.stackCount ?? 1)));
+    paddingY = Math.max(paddingY, Math.abs((cfg.stackOffsetY ?? 0) * (cfg.stackCount ?? 1)));
   }
 
   return {
