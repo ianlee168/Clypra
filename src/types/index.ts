@@ -250,6 +250,8 @@ export interface VideoClip extends Clip {
 
 export interface AudioClip extends Clip {
   kind: "audio";
+  /** Direct audio file path (used for audio library items that bypass mediaAssets) */
+  audioPath?: string;
 }
 
 export interface ImageClip extends Clip {

@@ -172,10 +172,12 @@ export const MobileEditorLayout: React.FC = () => {
           type: "audio",
           duration: cachedFile.metadata.duration || Number(item.duration) || 5,
           size: cachedFile.size,
-          coverArt: item.coverArtUrl,
+          // coverArt removed - will use Clypra logo fallback in preview
         };
 
-        addMediaAsset(mediaAsset);
+        // NOTE: Don't add audio library items to project media assets
+        // They should only exist as timeline clips, not in the media panel
+        // addMediaAsset(mediaAsset);
 
         const latestTracks = useTimelineStore.getState().tracks;
         const latestClips = useTimelineStore.getState().clips;

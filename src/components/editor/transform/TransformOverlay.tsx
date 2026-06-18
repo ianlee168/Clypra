@@ -35,21 +35,12 @@ export function shouldScaleTextFontForHandle(handle: TransformHandle): boolean {
   return handle !== "move" && handle !== "rotate";
 }
 
-export function calculateTextResizeFontSize(
-  startFontSize: number,
-  handle: TransformHandle,
-  startTransform: { width: number; height: number },
-  nextTransform: { width?: number; height?: number },
-): number {
+export function calculateTextResizeFontSize(startFontSize: number, handle: TransformHandle, startTransform: { width: number; height: number }, nextTransform: { width?: number; height?: number }): number {
   const scale = calculateTextResizeScale(handle, startTransform, nextTransform);
   return Math.max(10, Math.min(300, Math.round(startFontSize * scale)));
 }
 
-export function calculateTextResizeScale(
-  handle: TransformHandle,
-  startTransform: { width: number; height: number },
-  nextTransform: { width?: number; height?: number },
-): number {
+export function calculateTextResizeScale(handle: TransformHandle, startTransform: { width: number; height: number }, nextTransform: { width?: number; height?: number }): number {
   const startWidth = Math.max(1, startTransform.width);
   const startHeight = Math.max(1, startTransform.height);
   const nextWidth = nextTransform.width ?? startTransform.width;
@@ -69,12 +60,7 @@ export function calculateTextResizeScale(
   return Math.max(0.01, scale);
 }
 
-export function calculateScaledTextTransform(
-  handle: TransformHandle,
-  startTransform: { x: number; y: number; width: number; height: number },
-  nextTransform: Partial<Clip>,
-  scale: number,
-): Partial<Clip> {
+export function calculateScaledTextTransform(handle: TransformHandle, startTransform: { x: number; y: number; width: number; height: number }, nextTransform: Partial<Clip>, scale: number): Partial<Clip> {
   if (!shouldScaleTextFontForHandle(handle)) return nextTransform;
 
   const centerX = startTransform.x + startTransform.width / 2;
@@ -661,8 +647,8 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
         <div
           className="absolute border inset-0 pointer-events-none transition-all duration-75"
           style={{
-            borderColor: showVerticalCenterGuide || showHorizontalCenterGuide ? "var(--color-guide-center)" : "var(--color-handle)",
-            boxShadow: showVerticalCenterGuide || showHorizontalCenterGuide ? "0 0 8px var(--color-guide-center)" : "0 2px 4px rgba(0, 0, 0, 0.15)",
+            borderColor: "var(--color-handle)",
+            boxShadow: "0 2px 4px rgba(0, 0, 0, 0.15)",
             borderWidth: "1px",
           }}
         />
@@ -702,8 +688,8 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
             top: 0,
             width: "1px",
             height: `${displayHeight}px`,
-            backgroundColor: "var(--color-guide-center)",
-            boxShadow: "0 0 4px var(--color-guide-center)",
+            backgroundColor: "var(--color-handle)",
+            boxShadow: "0 0 4px var(--color-handle)",
             zIndex: 14,
           }}
         />
@@ -716,8 +702,8 @@ export const TransformOverlay: React.FC<TransformOverlayProps> = ({ canvasWidth,
             top: `${centerScreen.y}px`,
             width: `${displayWidth}px`,
             height: "1px",
-            backgroundColor: "var(--color-guide-center)",
-            boxShadow: "0 0 4px var(--color-guide-center)",
+            backgroundColor: "var(--color-handle)",
+            boxShadow: "0 0 4px var(--color-handle)",
             zIndex: 14,
           }}
         />

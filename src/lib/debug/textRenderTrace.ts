@@ -2,6 +2,8 @@ const DEBUG_KEY = "clypra.debug.textRender";
 
 export function isTextRenderTraceEnabled(): boolean {
   if (typeof window === "undefined") return false;
+  // ✅ Disable in production builds by default
+  if (!import.meta.env.DEV) return false;
   return window.localStorage?.getItem(DEBUG_KEY) === "1" || (window as any).__CLYPRA_TEXT_RENDER_DEBUG__ === true;
 }
 

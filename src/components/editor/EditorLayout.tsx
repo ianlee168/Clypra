@@ -209,10 +209,12 @@ export const EditorLayout: React.FC = () => {
           type: "audio",
           duration: cachedFile.metadata.duration || Number(item.duration) || 5,
           size: cachedFile.size,
-          coverArt: item.coverArtUrl,
+          // coverArt removed - will use Clypra logo fallback in preview
         };
 
-        addMediaAsset(mediaAsset);
+        // NOTE: Don't add audio library items to project media assets
+        // They should only exist as timeline clips, not in the media panel
+        // addMediaAsset(mediaAsset);
 
         const latestTracks = useTimelineStore.getState().tracks;
         const latestClips = useTimelineStore.getState().clips;
@@ -239,7 +241,8 @@ export const EditorLayout: React.FC = () => {
             width: project?.canvasWidth || 1920,
             height: project?.canvasHeight || 1080,
             fitMode: resolveDefaultFitModeForAsset(mediaAsset),
-          }),
+            audioPath: absolutePath, // Store path directly for audio library items
+          }) as any,
         );
       })().catch((error) => {
         console.error("[EditorLayout] Failed to add audio to timeline:", error);

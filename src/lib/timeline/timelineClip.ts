@@ -62,6 +62,8 @@ interface CreateClipFromAssetParams {
   width: number;
   height: number;
   fitMode?: ClipFitModeExtended;
+  /** Optional direct audio path for audio library items that bypass mediaAssets */
+  audioPath?: string;
 }
 
 /**
@@ -163,7 +165,7 @@ export function calculateClipDimensions(asset: MediaAsset, canvasWidth: number, 
   return { x, y, width, height };
 }
 
-export const createClipFromAsset = ({ asset, trackId, startTime, width, height, fitMode = DEFAULT_PLACEMENT_POLICY.defaultVisualFitMode }: CreateClipFromAssetParams): Clip => {
+export const createClipFromAsset = ({ asset, trackId, startTime, width, height, fitMode = DEFAULT_PLACEMENT_POLICY.defaultVisualFitMode, audioPath }: CreateClipFromAssetParams): Clip => {
   const duration = resolveClipDuration(asset);
 
   // Calculate dimensions that preserve aspect ratio.
@@ -199,5 +201,6 @@ export const createClipFromAsset = ({ asset, trackId, startTime, width, height, 
       stickerAnimationPath: asset.stickerAnimationPath,
       stickerSourceId: asset.stickerSourceId,
     }),
-  };
+    ...(audioPath && asset.type === "audio" && { audioPath }), // Include audioPath for audio clips
+  } as any;
 };

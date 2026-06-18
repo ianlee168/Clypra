@@ -1,6 +1,7 @@
 import React, { useRef, useEffect, useState } from "react";
 import { platform } from "@/core/platform";
-import { drawProfessionalWaveform, convertLegacyWaveform, getThemeAccentRgb, hexToRgb } from "@/lib/utils/canvasUtils";
+import { drawProfessionalWaveform, getThemeAccentRgb } from "@/lib/utils/canvasUtils";
+import { traceStart, traceEnd } from "@/lib/debug/performanceTrace";
 import type { WaveformBucket } from "@/types";
 import { invoke } from "@tauri-apps/api/core";
 import { normalizePathForTauriInvoke } from "@/lib/platform/tauri";
@@ -30,6 +31,9 @@ export const TimelineWaveform: React.FC<TimelineWaveformProps> = ({ audioPath, c
   const sourceStart = Math.max(0, Number.isFinite(trimIn) ? trimIn : 0);
   const sourceDuration = Math.max(0, Math.min(duration, (Number.isFinite(trimOut) ? trimOut! : sourceStart + duration) - sourceStart));
 
+  // Resolve path once
+  const resolvedPath = audioPath.startsWith("asset://") ? audioPath : platform.convertFileSrc(audioPath);
+
   // Watch for theme changes on document element and trigger redraw
   useEffect(() => {
     const observer = new MutationObserver(() => {
@@ -42,10 +46,8 @@ export const TimelineWaveform: React.FC<TimelineWaveformProps> = ({ audioPath, c
     return () => observer.disconnect();
   }, []);
 
-  // Decode audio and generate waveform data
+  // Decode audio and generate waveform data - SIMPLE SYNCHRONOUS APPROACH (same as MediaCardWaveform)
   useEffect(() => {
-    const resolvedPath = audioPath.startsWith("asset://") ? audioPath : platform.convertFileSrc(audioPath);
-
     // Create cache key that includes sample count for zoom-responsive caching
     const cacheKey = `${resolvedPath}:${sourceStart.toFixed(3)}:${sourceDuration.toFixed(3)}:${sampleCount}`;
 
@@ -61,12 +63,20 @@ export const TimelineWaveform: React.FC<TimelineWaveformProps> = ({ audioPath, c
 
     const generateWaveform = async () => {
       try {
+        traceStart("waveform-generation", {
+          path: audioPath,
+          sampleCount,
+          duration: sourceDuration,
+        });
+
         setIsLoading(true);
         setHasError(false);
 
         // Try Rust backend first (professional peak + RMS extraction)
+        let rustTraceStarted = false;
         try {
-          // Convert asset:// protocol back to file path for Rust
+          traceStart("waveform-rust-extract");
+          rustTraceStarted = true;
           const filePath = normalizePathForTauriInvoke(audioPath);
 
           const buckets = await invoke<WaveformBucket[]>("extract_waveform_data", {
@@ -76,54 +86,89 @@ export const TimelineWaveform: React.FC<TimelineWaveformProps> = ({ audioPath, c
             duration: sourceDuration || duration,
           });
 
+          traceEnd("waveform-rust-extract", { bucketCount: buckets?.length || 0 });
+
           if (!isCancelled && buckets && buckets.length > 0) {
             waveformCache.set(cacheKey, buckets);
             setWaveformData(buckets);
             setIsLoading(false);
+            traceEnd("waveform-generation", { backend: "rust", success: true });
             return;
           }
         } catch (rustError) {
-          console.warn("[TimelineWaveform] Rust extraction failed, falling back to Web Audio API:", rustError);
+          if (rustTraceStarted) {
+            traceEnd("waveform-rust-extract", { error: true });
+          }
+          console.warn("[TimelineWaveform] Rust extraction failed, using Web Audio API fallback:", rustError);
         }
 
-        // Fallback: Web Audio API (legacy RMS-only path)
+        // ✅ FALLBACK: Simple Web Audio API (same as MediaCardWaveform - NO WORKER)
+        traceStart("waveform-webaudio-decode");
         const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
         const audioContext = new AudioContextClass();
 
         const response = await fetch(resolvedPath);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch audio: ${response.status}`);
+        }
+
         const arrayBuffer = await response.arrayBuffer();
         const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
 
         if (isCancelled) {
           audioContext.close();
+          traceEnd("waveform-webaudio-decode", { cancelled: true });
           return;
         }
 
+        // Extract channel data
         const channelData = audioBuffer.getChannelData(0);
-        const startSample = Math.max(0, Math.floor(sourceStart * audioBuffer.sampleRate));
-        const endSample = Math.max(startSample + 1, Math.min(channelData.length, Math.floor((sourceStart + (sourceDuration || duration)) * audioBuffer.sampleRate)));
-        const visibleChannelData = channelData.subarray(startSample, endSample);
-        const samples = sampleCount;
-        const blockSize = Math.max(1, Math.floor(visibleChannelData.length / samples));
-        const rmsOnly: number[] = [];
+        const sampleRate = audioBuffer.sampleRate;
 
-        // Calculate RMS for each block
-        for (let i = 0; i < samples; i++) {
+        // Calculate sample range
+        const startSample = Math.max(0, Math.floor(sourceStart * sampleRate));
+        const endSample = Math.min(channelData.length, Math.floor((sourceStart + sourceDuration) * sampleRate));
+        const visibleChannelData = channelData.subarray(startSample, endSample);
+
+        // Generate waveform buckets
+        const blockSize = Math.max(1, Math.floor(visibleChannelData.length / sampleCount));
+        const buckets: WaveformBucket[] = [];
+
+        for (let i = 0; i < sampleCount; i++) {
           const start = i * blockSize;
           const end = start + blockSize;
-          let sum = 0;
+
+          let peak = 0;
+          let sumSquares = 0;
+
           for (let j = start; j < end && j < visibleChannelData.length; j++) {
-            sum += visibleChannelData[j] * visibleChannelData[j];
+            const value = Math.abs(visibleChannelData[j]);
+            peak = Math.max(peak, value);
+            sumSquares += visibleChannelData[j] * visibleChannelData[j];
           }
-          const rms = Math.sqrt(sum / blockSize);
-          rmsOnly.push(rms);
+
+          const rms = Math.sqrt(sumSquares / blockSize);
+          buckets.push({ peak, rms });
         }
 
-        const max = Math.max(...rmsOnly);
-        const normalized = rmsOnly.map((v) => (max > 0 ? v / max : 0));
+        // Normalize
+        const maxPeak = Math.max(...buckets.map((b) => b.peak));
+        const maxRms = Math.max(...buckets.map((b) => b.rms));
 
-        // Convert legacy RMS to peak + RMS format
-        const buckets = convertLegacyWaveform(normalized);
+        if (maxPeak > 0) {
+          buckets.forEach((bucket) => {
+            bucket.peak = bucket.peak / maxPeak;
+          });
+        }
+
+        if (maxRms > 0) {
+          buckets.forEach((bucket) => {
+            bucket.rms = bucket.rms / maxRms;
+          });
+        }
+
+        audioContext.close();
+        traceEnd("waveform-webaudio-decode", { bucketCount: buckets.length });
 
         if (!isCancelled) {
           waveformCache.set(cacheKey, buckets);
@@ -131,7 +176,7 @@ export const TimelineWaveform: React.FC<TimelineWaveformProps> = ({ audioPath, c
           setIsLoading(false);
         }
 
-        audioContext.close();
+        traceEnd("waveform-generation", { backend: "webaudio", success: true });
       } catch (error) {
         console.error("[TimelineWaveform] Failed to generate waveform:", error);
         if (!isCancelled) {
@@ -139,6 +184,7 @@ export const TimelineWaveform: React.FC<TimelineWaveformProps> = ({ audioPath, c
           setHasError(true);
           setIsLoading(false);
         }
+        traceEnd("waveform-generation", { error: true });
       }
     };
 
@@ -147,7 +193,7 @@ export const TimelineWaveform: React.FC<TimelineWaveformProps> = ({ audioPath, c
     return () => {
       isCancelled = true;
     };
-  }, [audioPath, duration, sampleCount, sourceDuration, sourceStart]);
+  }, [resolvedPath, sampleCount, sourceStart, sourceDuration, duration, audioPath]);
 
   // Draw professional waveform on canvas
   useEffect(() => {

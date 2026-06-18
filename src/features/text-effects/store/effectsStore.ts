@@ -1,7 +1,7 @@
 // src/features/text-effects/store/effectsStore.ts
 import { create } from "zustand";
 import type { EffectIndexItem, EffectFullDefinition } from "../types/types";
-import { TextEffectsApi } from "../api/textEffectsApi";
+import { TextEffectsApi, TEXT_EFFECT_CATEGORIES } from "../api/textEffectsApi";
 import { builtInPresets } from "@clypra/engine";
 import { getTextEffectCache } from "../cache/persistentCache";
 import { getApiHeaders, getApiBaseUrl } from "@/lib/api";
@@ -298,7 +298,7 @@ export const useEffectsStore = create<EffectsState>((set, get) => ({
     }
 
     // 6. Fallback: Scan known categories
-    const ALL_CATEGORIES = ["3d", "neon", "metallic", "glitch", "retro", "gradient", "grunge", "outline", "shadow", "elements", "luxury", "essentials", "color", "light", "stylize", "distort", "vintage", "modern", "cinematic", "bw", "classic", "clean", "organic"];
+    const ALL_CATEGORIES = TEXT_EFFECT_CATEGORIES;
     for (const cat of ALL_CATEGORIES) {
       try {
         const categoryManifest = await TextEffectsApi.getEffectsByCategory(cat);

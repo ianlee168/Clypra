@@ -87,71 +87,104 @@ export const Timeline: React.FC = () => {
     }
   }, [duration, currentTime, seek]);
 
+  // ✅ PERFORMANCE OPTIMIZED: RAF-based auto-scroll with throttled state updates
+  const autoScrollRafRef = useRef<number | null>(null);
+  const lastScrollStateUpdateRef = useRef(0);
+  const SCROLL_STATE_THROTTLE = 100; // Update React state only every 100ms during playback
+
   // Auto-scroll during playback: viewport tracking
   useEffect(() => {
     const container = containerRef.current;
+
+    // Cleanup previous RAF loop
+    if (autoScrollRafRef.current !== null) {
+      cancelAnimationFrame(autoScrollRafRef.current);
+      autoScrollRafRef.current = null;
+    }
+
     if (!container || !isPlaying) {
       wasPlayingRef.current = isPlaying;
       return;
     }
 
     const labelColumnWidth = getTimelineLabelColumnWidth(hasClips);
-    const viewportWidth = container.clientWidth;
-    const effectiveViewportWidth = viewportWidth - labelColumnWidth;
-    const contentWidthActual = container.scrollWidth;
-    const maxScrollLeft = Math.max(0, contentWidthActual - viewportWidth);
-
-    const playheadX = Math.round(currentTime * pixelsPerSecond);
-    let newScrollLeft = container.scrollLeft;
+    const effectiveViewportWidth = container.clientWidth - labelColumnWidth;
 
     // Bug 1 fix: On play-start transition, if playhead is outside viewport, snap to it
     const justStartedPlaying = !wasPlayingRef.current && isPlaying;
     wasPlayingRef.current = isPlaying;
 
     if (justStartedPlaying) {
+      const playheadX = Math.round(currentTime * pixelsPerSecond);
       const leftEdge = container.scrollLeft;
       const rightEdge = leftEdge + effectiveViewportWidth;
+      const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
 
       if (playheadX < leftEdge || playheadX > rightEdge) {
         // Place playhead at 15% from left edge ("look-ahead" position)
         const centered = Math.max(0, playheadX - effectiveViewportWidth * 0.15);
-        newScrollLeft = Math.min(centered, maxScrollLeft);
+        const newScrollLeft = Math.min(centered, maxScrollLeft);
         container.scrollLeft = newScrollLeft;
         setScrollLeft(newScrollLeft);
-        return;
       }
     }
 
-    const isAtAbsoluteEnd = currentTime >= duration - 0.01;
+    // ✅ RAF loop for smooth auto-scroll (no state updates every frame)
+    const autoScroll = () => {
+      if (!isPlaying || !container) return;
 
-    if (isAtAbsoluteEnd) {
-      newScrollLeft = maxScrollLeft;
-    } else {
-      // Bug 4 fix: Use effective viewport width (minus label column)
-      const bufferPx = effectiveViewportWidth * 0.1;
-      const rightEdge = newScrollLeft + effectiveViewportWidth;
+      const now = performance.now();
+      const playheadX = Math.round(currentTime * pixelsPerSecond);
+      const maxScrollLeft = Math.max(0, container.scrollWidth - container.clientWidth);
+      let newScrollLeft = container.scrollLeft;
 
-      if (playheadX >= rightEdge - bufferPx) {
-        newScrollLeft = playheadX;
+      const isAtAbsoluteEnd = currentTime >= duration - 0.01;
+
+      if (isAtAbsoluteEnd) {
+        newScrollLeft = maxScrollLeft;
+      } else {
+        const bufferPx = effectiveViewportWidth * 0.1;
+        const rightEdge = newScrollLeft + effectiveViewportWidth;
+
+        if (playheadX >= rightEdge - bufferPx) {
+          newScrollLeft = playheadX;
+        }
+
+        const currentRightEdge = newScrollLeft + effectiveViewportWidth;
+        if (playheadX > currentRightEdge) {
+          newScrollLeft = Math.min(playheadX, maxScrollLeft);
+        }
       }
 
-      const currentRightEdge = newScrollLeft + effectiveViewportWidth;
-      if (playheadX > currentRightEdge) {
-        newScrollLeft = Math.min(playheadX, maxScrollLeft);
+      newScrollLeft = Math.max(0, Math.min(newScrollLeft, maxScrollLeft));
+
+      const epsilon = 2; // px
+      if (maxScrollLeft - newScrollLeft < epsilon) {
+        newScrollLeft = maxScrollLeft;
       }
-    }
 
-    newScrollLeft = Math.max(0, Math.min(newScrollLeft, maxScrollLeft));
+      // Always update DOM directly (smooth visual scroll)
+      if (Math.abs(container.scrollLeft - newScrollLeft) > 0.5) {
+        container.scrollLeft = newScrollLeft;
 
-    const epsilon = 2; // px
-    if (maxScrollLeft - newScrollLeft < epsilon) {
-      newScrollLeft = maxScrollLeft;
-    }
+        // Throttled React state update (reduce re-renders)
+        if (now - lastScrollStateUpdateRef.current >= SCROLL_STATE_THROTTLE) {
+          setScrollLeft(newScrollLeft);
+          lastScrollStateUpdateRef.current = now;
+        }
+      }
 
-    if (Math.abs(container.scrollLeft - newScrollLeft) > 0.5) {
-      container.scrollLeft = newScrollLeft;
-      setScrollLeft(newScrollLeft);
-    }
+      autoScrollRafRef.current = requestAnimationFrame(autoScroll);
+    };
+
+    autoScrollRafRef.current = requestAnimationFrame(autoScroll);
+
+    return () => {
+      if (autoScrollRafRef.current !== null) {
+        cancelAnimationFrame(autoScrollRafRef.current);
+        autoScrollRafRef.current = null;
+      }
+    };
   }, [currentTime, pixelsPerSecond, isPlaying, duration, setScrollLeft, hasClips]);
 
   // Handle keyboard shortcuts for timeline operations
@@ -318,7 +351,7 @@ export const Timeline: React.FC = () => {
     <div className="h-60 md:h-80 flex flex-col select-none relative" style={{ backgroundColor: "var(--color-timeline-bg)" }}>
       <TimelineToolbar />
 
-      <div className="absolute top-[40px] left-0 right-0 bottom-0 bg-(--color-timeline-ruler-bg)" style={{ zIndex: 120, width: `${TIMELINE_TRACK_LABEL_WIDTH_PX}px`, minWidth: `${TIMELINE_TRACK_LABEL_WIDTH_PX}px` }}></div>
+      {hasClips && <div className="absolute top-[40px] left-0 right-0 bottom-0 bg-(--color-timeline-ruler-bg)" style={{ zIndex: 120, width: `${TIMELINE_TRACK_LABEL_WIDTH_PX}px`, minWidth: `${TIMELINE_TRACK_LABEL_WIDTH_PX}px` }}></div>}
 
       <div className="flex-1 overflow-hidden">
         {/* ── Single scroll container with CSS Grid ─────────────────────── */}

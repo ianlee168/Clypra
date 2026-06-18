@@ -14,6 +14,15 @@ export interface TextEffectSummary {
 
 const BASE = getApiBaseUrl();
 
+export const TEXT_EFFECT_CATEGORIES = [
+  "3d", // second most requested, used in thumbnails + titles
+  "neon", // highest demand on CapCut, defines "creator aesthetic"
+  "essentials", // plain bold/clean text — every editor's starting point
+  "glitch", // VHS/retro digital — consistent top performer
+  "gradient", // versatile, works across all content types
+  "outline", // clean, readable, popular for captions + lower thirds
+] as const;
+
 export const TextEffectsApi = {
   // In-memory cache map to avoid duplicate network calls when users toggle effects
   _effectsCache: new Map<string, TextEffectDefinition>(),

@@ -1,13 +1,13 @@
 import { useState, useEffect } from "react";
 import { useEffectsStore } from "../store/effectsStore";
 import { EffectCard } from "@/components/ui/EffectCard";
-import { TextEffectsApi } from "../api/textEffectsApi";
+import { TextEffectsApi, TEXT_EFFECT_CATEGORIES } from "../api/textEffectsApi";
 import type { TextEffectDefinition } from "../types/types";
 import { useFavoritesStore } from "@/store/favoritesStore";
 import { useUIStore } from "@/store/uiStore";
 import { getActiveSessionOrNull } from "@/core/runtime/ProjectSession";
 
-const CATEGORIES = ["3d", "neon", "metallic", "glitch", "retro", "gradient", "grunge", "outline", "shadow", "elements", "luxury", "essentials", "color", "light", "stylize", "distort", "vintage", "modern", "cinematic", "bw", "classic", "clean", "organic"];
+const CATEGORIES = TEXT_EFFECT_CATEGORIES;
 
 interface EffectGridProps {
   searchQuery?: string;
