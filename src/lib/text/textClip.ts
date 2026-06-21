@@ -389,17 +389,35 @@ function applyTemplateCustomization(renderer: TemplateRenderer, template: TextTe
 
 export function measureTextTemplateContentSize(options: { templateId?: string; templateDefinition?: TextTemplate; text?: string; customization?: any }): TextTemplateContentSize | null {
   const template = resolveTextTemplateDefinition(options.templateId, options.templateDefinition);
-  if (!template?.layers?.length) return null;
+  if (!template?.layers?.length) {
+    textRenderTrace("text-template-measure-no-template", {
+      templateId: options.templateId,
+      hasTemplateDefinition: !!options.templateDefinition,
+    });
+    return null;
+  }
 
   const legacyTemplate = template as TextTemplate & { width?: number; height?: number };
   const templateWidth = Math.max(1, Number(legacyTemplate.canvasWidth ?? legacyTemplate.width ?? 800));
   const templateHeight = Math.max(1, Number(legacyTemplate.canvasHeight ?? legacyTemplate.height ?? 450));
   const fallbackAspect = templateWidth / templateHeight;
 
+  textRenderTrace("text-template-measure-start", {
+    templateId: options.templateId ?? template.id,
+    text: options.text,
+    templateWidth,
+    templateHeight,
+    fallbackAspect,
+    layerCount: template.layers?.length,
+  });
+
   try {
     const canvas = createMeasurementCanvas(templateWidth, templateHeight);
     const ctx = canvas?.getContext("2d") as CanvasRenderingContext2D | OffscreenCanvasRenderingContext2D | null;
     if (!ctx) {
+      textRenderTrace("text-template-measure-no-canvas", {
+        templateId: options.templateId ?? template.id,
+      });
       return { width: templateWidth, height: templateHeight, aspectRatio: fallbackAspect, bounds: null, source: "fallback" };
     }
 
@@ -407,9 +425,29 @@ export function measureTextTemplateContentSize(options: { templateId?: string; t
     applyTemplateCustomization(renderer, template, options.text ?? "Text", options.customization);
     renderer.drawFrame(ctx, 0, { skipClear: true });
     const bounds = renderer.getContentBounds();
+
+    textRenderTrace("text-template-measure-bounds", {
+      templateId: options.templateId ?? template.id,
+      text: options.text,
+      bounds,
+      hasBounds: !!bounds,
+      boundsValid: bounds && bounds.width > 0 && bounds.height > 0,
+    });
+
     if (!bounds || bounds.width <= 0 || bounds.height <= 0) {
+      textRenderTrace("text-template-measure-invalid-bounds", {
+        templateId: options.templateId ?? template.id,
+        bounds,
+      });
       return { width: templateWidth, height: templateHeight, aspectRatio: fallbackAspect, bounds: null, source: "fallback" };
     }
+
+    textRenderTrace("text-template-measure-success", {
+      templateId: options.templateId ?? template.id,
+      contentBounds: bounds,
+      aspectRatio: bounds.width / bounds.height,
+      source: "template",
+    });
 
     return {
       width: bounds.width,
@@ -430,6 +468,15 @@ export function measureTextTemplateContentSize(options: { templateId?: string; t
 export function calculateTextTemplateClipSize(options: { canvasWidth: number; canvasHeight: number; templateId?: string; templateDefinition?: TextTemplate; text?: string; customization?: any }): { width: number; height: number; content: TextTemplateContentSize | null } {
   const content = measureTextTemplateContentSize(options);
 
+  textRenderTrace("text-template-calculate-size-start", {
+    templateId: options.templateId,
+    canvasWidth: options.canvasWidth,
+    canvasHeight: options.canvasHeight,
+    text: options.text,
+    contentMeasured: content,
+    contentSource: content?.source,
+  });
+
   // If we successfully measured content bounds, use them
   if (content?.source === "template" && content.bounds && content.bounds.width > 0 && content.bounds.height > 0) {
     const contentWidth = content.bounds.width;
@@ -444,6 +491,15 @@ export function calculateTextTemplateClipSize(options: { canvasWidth: number; ca
     let width: number;
     let height: number;
 
+    textRenderTrace("text-template-calculate-size-using-bounds", {
+      templateId: options.templateId,
+      contentWidth,
+      contentHeight,
+      contentAspect,
+      maxWidth,
+      maxHeight,
+    });
+
     // Determine if we're width-constrained or height-constrained
     if (contentWidth > maxWidth || contentHeight > maxHeight) {
       // Content is larger than max, scale it down proportionally
@@ -451,21 +507,53 @@ export function calculateTextTemplateClipSize(options: { canvasWidth: number; ca
         // Height-constrained
         height = maxHeight;
         width = height * contentAspect;
+        textRenderTrace("text-template-calculate-size-height-constrained", {
+          templateId: options.templateId,
+          width,
+          height,
+          scaleFactor: height / contentHeight,
+        });
       } else {
         // Width-constrained
         width = maxWidth;
         height = width / contentAspect;
+        textRenderTrace("text-template-calculate-size-width-constrained", {
+          templateId: options.templateId,
+          width,
+          height,
+          scaleFactor: width / contentWidth,
+        });
       }
     } else {
       // Content fits within max bounds, use actual size
       width = contentWidth;
       height = contentHeight;
+      textRenderTrace("text-template-calculate-size-actual-size", {
+        templateId: options.templateId,
+        width,
+        height,
+        contentFits: true,
+      });
     }
+
+    textRenderTrace("text-template-calculate-size-result", {
+      templateId: options.templateId,
+      finalWidth: width,
+      finalHeight: height,
+      contentBounds: content.bounds,
+      source: "template-bounds",
+    });
 
     return { width, height, content };
   }
 
   // Fallback to aspect-based sizing if measurement failed or returned fallback
+  textRenderTrace("text-template-calculate-size-fallback", {
+    templateId: options.templateId,
+    contentSource: content?.source,
+    usingAspectFallback: true,
+  });
+
   const templateAspect = content?.aspectRatio && Number.isFinite(content.aspectRatio) && content.aspectRatio > 0 ? content.aspectRatio : 16 / 9;
   const maxWidth = options.canvasWidth * 0.5;
   const maxHeight = options.canvasHeight * 0.25;
@@ -479,6 +567,15 @@ export function calculateTextTemplateClipSize(options: { canvasWidth: number; ca
     width = maxWidth;
     height = width / templateAspect;
   }
+
+  textRenderTrace("text-template-calculate-size-fallback-result", {
+    templateId: options.templateId,
+    width,
+    height,
+    templateAspect,
+    maxWidth,
+    maxHeight,
+  });
 
   return { width, height, content };
 }
