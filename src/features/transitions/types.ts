@@ -14,6 +14,7 @@ export interface TransitionAsset {
   category: string;
   description: string;
   thumbnail: string;
+  preview: string;
   renderer: TransitionRenderer;
   duration?: {
     min: number;
