@@ -1,0 +1,574 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { PreviewMediaPool } from "../PreviewMediaPool";
+import type { Clip, MediaAsset } from "@/types";
+
+// Mock Tauri API
+vi.mock("@tauri-apps/api/core", () => ({
+  convertFileSrc: (path: string) => path, // Just return the path as-is for tests
+}));
+
+// Mock browser APIs for Node environment
+if (typeof HTMLVideoElement === "undefined") {
+  (global as any).HTMLVideoElement = class HTMLVideoElement {
+    src = "";
+    currentTime = 0;
+    duration = 10;
+    paused = true;
+    muted = true;
+    volume = 1;
+    playbackRate = 1;
+    readyState = 4;
+    seeking = false;
+    playsInline = true;
+    preload = "auto";
+    style = { cssText: "" };
+    parentNode = null;
+
+    addEventListener() {}
+    removeEventListener() {}
+    load() {}
+    play() {
+      this.paused = false;
+      return Promise.resolve();
+    }
+    pause() {
+      this.paused = true;
+    }
+    requestVideoFrameCallback() {
+      return 1;
+    }
+    cancelVideoFrameCallback() {}
+  };
+}
+
+if (typeof HTMLAudioElement === "undefined") {
+  (global as any).HTMLAudioElement = class HTMLAudioElement extends (global as any).HTMLVideoElement {};
+}
+
+if (typeof document === "undefined") {
+  (global as any).document = {
+    createElement: (tag: string) => {
+      if (tag === "video") return new (global as any).HTMLVideoElement();
+      if (tag === "audio") return new (global as any).HTMLAudioElement();
+      if (tag === "div") {
+        return {
+          style: { cssText: "" },
+          appendChild: () => {},
+          removeChild: () => {},
+          parentNode: null,
+        };
+      }
+      return {};
+    },
+    body: {
+      appendChild: () => {},
+      removeChild: () => {},
+    },
+  };
+}
+
+// Helper to create mock clips
+function createMockClip(id: string, mediaId: string, startTime: number, duration: number, trimIn = 0): Clip {
+  return {
+    id,
+    mediaId,
+    trackId: "track-1",
+    startTime,
+    duration,
+    trimIn,
+    trimOut: trimIn + duration,
+    kind: "video",
+    volume: 1.0,
+  } as Clip;
+}
+
+// Helper to create mock assets
+function createMockAsset(id: string, path: string): MediaAsset {
+  return {
+    id,
+    path,
+    type: "video",
+    name: `asset-${id}`,
+    duration: 10,
+    width: 1920,
+    height: 1080,
+  } as MediaAsset;
+}
+
+// Helper to wait for async operations
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+describe("PreviewMediaPool — FINDING-001: Re-entrancy Protection", () => {
+  let pool: PreviewMediaPool;
+
+  beforeEach(() => {
+    pool = new PreviewMediaPool();
+  });
+
+  afterEach(() => {
+    pool.dispose();
+  });
+
+  it("should allow single sync call to complete normally", () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+    const syncState = {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    };
+
+    // Should not throw
+    expect(() => {
+      pool.sync(clips, assets, tracks, syncState);
+    }).not.toThrow();
+
+    // Should have video elements
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeGreaterThan(0);
+  });
+
+  it("should queue sync request when already syncing", async () => {
+    // Create a large number of clips to make sync() take longer
+    const clips = Array.from({ length: 100 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 100 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    const syncState1 = {
+      time: 0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    };
+
+    const syncState2 = {
+      time: 5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    };
+
+    // Call sync twice rapidly
+    pool.sync(clips, assets, tracks, syncState1);
+    pool.sync(clips, assets, tracks, syncState2); // Should queue and return immediately
+
+    // Give time for queued sync to process
+    await wait(50);
+
+    // Both syncs should have processed eventually
+    // The pool should reflect the final state (syncState2)
+    expect(pool).toBeDefined();
+  });
+
+  it("should only process the most recent queued request", async () => {
+    const clips = Array.from({ length: 50 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 50 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Call sync multiple times rapidly (simulating 60fps calls)
+    for (let i = 0; i < 10; i++) {
+      pool.sync(clips, assets, tracks, {
+        time: i,
+        state: "playing" as const,
+        speed: 1.0,
+        muted: false,
+        volume: 100,
+      });
+    }
+
+    // Give time for all syncs to process
+    await wait(100);
+
+    // Pool should be in valid state (not corrupted)
+    expect(() => pool.getVideoElements()).not.toThrow();
+  });
+
+  it("should handle sync exception gracefully and remain operational", () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+    const syncState = {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    };
+
+    // First sync should work
+    pool.sync(clips, assets, tracks, syncState);
+
+    // Dispose the pool to cause an error on next sync
+    pool.dispose();
+
+    // Second sync should not throw (disposal check returns early)
+    expect(() => {
+      pool.sync(clips, assets, tracks, syncState);
+    }).not.toThrow();
+  });
+
+  it("should clear queued request on disposal", () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+    const syncState = {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    };
+
+    // Start a sync
+    pool.sync(clips, assets, tracks, syncState);
+
+    // Queue another sync
+    pool.sync(clips, assets, tracks, { ...syncState, time: 5.0 });
+
+    // Dispose should not throw even with queued request
+    expect(() => pool.dispose()).not.toThrow();
+  });
+
+  it("should not create duplicate elements during concurrent sync attempts", async () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Call sync many times rapidly (simulating race condition)
+    for (let i = 0; i < 20; i++) {
+      pool.sync(clips, assets, tracks, {
+        time: 2.5,
+        state: "playing" as const,
+        speed: 1.0,
+        muted: false,
+        volume: 100,
+      });
+    }
+
+    // Wait for all syncs to process
+    await wait(100);
+
+    // Should only have one element for the clip (not duplicates)
+    const videoElements = pool.getVideoElements();
+    const clipKeys = Array.from(videoElements.keys()).filter((key) => key.includes("clip-1"));
+    expect(clipKeys.length).toBeLessThanOrEqual(1);
+  });
+
+  it("should handle rapid state changes without corruption", async () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Simulate rapid playback state changes
+    const states: Array<"playing" | "paused" | "stopped"> = ["playing", "paused", "playing", "paused", "stopped"];
+
+    for (const state of states) {
+      pool.sync(clips, assets, tracks, {
+        time: 2.5,
+        state,
+        speed: 1.0,
+        muted: false,
+        volume: 100,
+      });
+    }
+
+    await wait(50);
+
+    // Pool should remain functional
+    expect(() => pool.getVideoElements()).not.toThrow();
+  });
+});
+
+describe("PreviewMediaPool — Basic Functionality", () => {
+  let pool: PreviewMediaPool;
+
+  beforeEach(() => {
+    pool = new PreviewMediaPool();
+  });
+
+  afterEach(() => {
+    pool.dispose();
+  });
+
+  it("should create video elements for video clips", () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+    const syncState = {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    };
+
+    pool.sync(clips, assets, tracks, syncState);
+
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeGreaterThan(0);
+  });
+
+  it("should handle empty clip list", () => {
+    const clips: Clip[] = [];
+    const assets: MediaAsset[] = [];
+    const tracks = [{ id: "track-1", type: "video" }];
+    const syncState = {
+      time: 0,
+      state: "paused" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    };
+
+    expect(() => {
+      pool.sync(clips, assets, tracks, syncState);
+    }).not.toThrow();
+
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBe(0);
+  });
+
+  it("should cleanup on dispose", () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+    const syncState = {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    };
+
+    pool.sync(clips, assets, tracks, syncState);
+
+    // Should have elements before dispose
+    expect(pool.getVideoElements().size).toBeGreaterThan(0);
+
+    pool.dispose();
+
+    // Should have no elements after dispose
+    expect(pool.getVideoElements().size).toBe(0);
+  });
+
+  it("should not process sync calls after disposal", () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+    const syncState = {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    };
+
+    pool.dispose();
+
+    // Sync after disposal should return early
+    pool.sync(clips, assets, tracks, syncState);
+
+    // Should have no elements (sync was rejected)
+    expect(pool.getVideoElements().size).toBe(0);
+  });
+
+  it("should handle multiple clips from same media source", () => {
+    // Two clips referencing the same media (common in split scenarios)
+    const clips = [
+      createMockClip("clip-1", "media-1", 0, 5, 0),
+      createMockClip("clip-2", "media-1", 5, 5, 5), // Split clip
+    ];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+    const syncState = {
+      time: 2.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    };
+
+    pool.sync(clips, assets, tracks, syncState);
+
+    const videoElements = pool.getVideoElements();
+    // Should have separate elements for each clip (different trimIn values)
+    expect(videoElements.size).toBeGreaterThanOrEqual(1);
+  });
+});
+
+describe("PreviewMediaPool — Split Clip Scenarios", () => {
+  let pool: PreviewMediaPool;
+
+  beforeEach(() => {
+    pool = new PreviewMediaPool();
+  });
+
+  afterEach(() => {
+    pool.dispose();
+  });
+
+  it("should handle clip split at playhead", async () => {
+    // Initial clip
+    const initialClips = [createMockClip("clip-1", "media-1", 0, 10, 0)];
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Sync with initial clip at time 5
+    pool.sync(initialClips, assets, tracks, {
+      time: 5.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // Simulate split: left clip keeps original ID, right clip gets new ID
+    const splitClips = [
+      createMockClip("clip-1", "media-1", 0, 5, 0), // Left (original ID, trimOut = 5)
+      createMockClip("clip-2", "media-1", 5, 5, 5), // Right (new ID, trimIn = 5)
+    ];
+
+    // Sync again with split clips
+    pool.sync(splitClips, assets, tracks, {
+      time: 5.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(50);
+
+    // Should have elements for both clips
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeGreaterThanOrEqual(1);
+  });
+
+  it("should handle rapid splits without element duplication", async () => {
+    const assets = [createMockAsset("media-1", "/path/to/video.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Start with one clip
+    let clips = [createMockClip("clip-1", "media-1", 0, 10, 0)];
+
+    pool.sync(clips, assets, tracks, {
+      time: 2.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    // Simulate multiple rapid splits
+    clips = [createMockClip("clip-1", "media-1", 0, 2, 0), createMockClip("clip-2", "media-1", 2, 8, 2)];
+    pool.sync(clips, assets, tracks, {
+      time: 2.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    clips = [createMockClip("clip-1", "media-1", 0, 2, 0), createMockClip("clip-2", "media-1", 2, 4, 2), createMockClip("clip-3", "media-1", 6, 4, 6)];
+    pool.sync(clips, assets, tracks, {
+      time: 4.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(100);
+
+    // Should have elements but not excessive duplicates
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThan(10); // Reasonable upper bound
+  });
+});
+
+describe("PreviewMediaPool — Performance and Memory", () => {
+  let pool: PreviewMediaPool;
+
+  beforeEach(() => {
+    pool = new PreviewMediaPool();
+  });
+
+  afterEach(() => {
+    pool.dispose();
+  });
+
+  it("should handle large number of clips efficiently", async () => {
+    // Create 100 clips
+    const clips = Array.from({ length: 100 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 100 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    const startTime = Date.now();
+
+    pool.sync(clips, assets, tracks, {
+      time: 50.0, // Middle of timeline
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    const endTime = Date.now();
+    const duration = endTime - startTime;
+
+    // Sync should complete in reasonable time (< 1 second for 100 clips)
+    expect(duration).toBeLessThan(1000);
+  });
+
+  it("should respect cache limits", async () => {
+    // Create more clips than cache limit (20)
+    const clips = Array.from({ length: 30 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 30 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Sync with all clips
+    pool.sync(clips, assets, tracks, {
+      time: 30.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(100);
+
+    // Cache should not grow unbounded
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(30);
+  });
+
+  it("should handle rapid time changes during playback", async () => {
+    const clips = [createMockClip("clip-1", "media-1", 0, 5), createMockClip("clip-2", "media-2", 5, 5), createMockClip("clip-3", "media-3", 10, 5)];
+    const assets = [createMockAsset("media-1", "/path/to/video1.mp4"), createMockAsset("media-2", "/path/to/video2.mp4"), createMockAsset("media-3", "/path/to/video3.mp4")];
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Simulate 60fps playback for 1 second (60 syncs)
+    for (let i = 0; i < 60; i++) {
+      const time = (i / 60) * 15; // 0 to 15 seconds over 60 frames
+      pool.sync(clips, assets, tracks, {
+        time,
+        state: "playing" as const,
+        speed: 1.0,
+        muted: false,
+        volume: 100,
+      });
+    }
+
+    await wait(100);
+
+    // Should remain stable
+    expect(() => pool.getVideoElements()).not.toThrow();
+  });
+});

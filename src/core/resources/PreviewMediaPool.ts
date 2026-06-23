@@ -184,6 +184,15 @@ export class PreviewMediaPool {
   private readonly MAX_CACHED_VIDEOS = 20;
   private readonly CACHE_EVICTION_AGE_MS = 60000; // 60 seconds unused (increased for split workflows)
 
+  // ─── RE-ENTRANCY PROTECTION ─────────────────────────────────────────────
+  private _syncInProgress = false;
+  private _queuedSyncRequest: {
+    clips: Clip[];
+    assets: MediaAsset[];
+    tracks: Array<{ id: string; type: string }>;
+    syncState: PreviewSyncState;
+  } | null = null;
+
   constructor() {
     this.container = document.createElement("div");
     // Position fixed and practically invisible, but NOT offscreen.
@@ -214,269 +223,263 @@ export class PreviewMediaPool {
       return;
     }
 
-    // ─── INSTRUMENTATION: Track sync frequency and structural changes ────────
-    this.syncCallCount++;
-    const currentClipIds = new Set(clips.map((c) => c.id));
-    const structuralChange = this.detectStructuralChange(currentClipIds);
-
-    if (structuralChange.changed) {
-      console.log(`[PreviewMediaPool INSTRUMENTATION] Sync #${this.syncCallCount} - STRUCTURAL CHANGE detected:`, {
-        added: structuralChange.added,
-        removed: structuralChange.removed,
-        playbackState: syncState.state,
-        time: syncState.time.toFixed(3),
-      });
+    // ─── RE-ENTRANCY GUARD ───────────────────────────────────────────────────
+    if (this._syncInProgress) {
+      // Already syncing - queue this request and return immediately
+      // Only keep the MOST RECENT request (intermediate states don't matter)
+      this._queuedSyncRequest = { clips, assets, tracks, syncState };
+      return;
     }
 
-    this.lastSyncClipIds = currentClipIds;
-    // ─────────────────────────────────────────────────────────────────────────
+    // Mark sync as in progress
+    this._syncInProgress = true;
 
-    this.trackMap = new Map(tracks.map((track) => [track.id, track]));
+    try {
+      // ─── INSTRUMENTATION: Track sync frequency and structural changes ────────
+      this.syncCallCount++;
+      const currentClipIds = new Set(clips.map((c) => c.id));
+      const structuralChange = this.detectStructuralChange(currentClipIds);
 
-    // DEBUG: Log what clips we received
-    if (this.syncCallCount % 50 === 0 || structuralChange.changed) {
-      console.log(`[PreviewMediaPool DEBUG] Sync #${this.syncCallCount} received:`, {
-        clipCount: clips.length,
-        clipIds: clips.map((c) => c.id),
-        structuralChange,
-        time: syncState.time.toFixed(3),
-      });
-    }
+      this.lastSyncClipIds = currentClipIds;
+      // ─────────────────────────────────────────────────────────────────────────
 
-    // NEW ARCHITECTURE: Build desired state without immediate disposal
-    const desiredVideoBindings = new Map<string, { cacheKey: string; clip: Clip; asset: MediaAsset; isActive: boolean }>();
-    const desiredAudioKeys = new Set<string>();
+      this.trackMap = new Map(tracks.map((track) => [track.id, track]));
 
-    // CRITICAL: Detect if this is a full sync (structural change) or partial sync (active window only)
-    // On project load or clip add/remove, we get structural changes. During playback, no changes.
-    const isFullSync = structuralChange.changed;
+      // NEW ARCHITECTURE: Build desired state without immediate disposal
+      const desiredVideoBindings = new Map<string, { cacheKey: string; clip: Clip; asset: MediaAsset; isActive: boolean }>();
+      const desiredAudioKeys = new Set<string>();
 
-    // If full sync with removals, clear and rebuild registry
-    if (isFullSync && structuralChange.removed.length > 0) {
-      const now = performance.now();
-      for (const removedClipId of structuralChange.removed) {
-        const cacheKey = this.timelineClipRegistry.get(removedClipId);
-        if (cacheKey) {
-          // Mark as recently removed with timestamp (for transition grace period)
-          this.recentlyRemovedClips.set(cacheKey, now);
-        }
-        this.timelineClipRegistry.delete(removedClipId);
-      }
-    }
+      // CRITICAL: Detect if this is a full sync (structural change) or partial sync (active window only)
+      // On project load or clip add/remove, we get structural changes. During playback, no changes.
+      const isFullSync = structuralChange.changed;
 
-    for (const clip of clips) {
-      const asset = assets.find((a) => a.id === clip.mediaId);
-      const track = this.trackMap.get(clip.trackId);
-      if (track?.visible === false) continue;
-
-      if (asset?.type === "video") {
-        const sourcePath = asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path);
-
-        // Cache key strategy: For split clips that share media, we need separate elements
-        // to prevent rebinding conflicts during overlap. Use trimIn to differentiate.
-        const trimIn = clip.trimIn || 0;
-        const cacheKey = `${clip.mediaId}-${sourcePath}-trim${trimIn.toFixed(3)}`;
-
-        const sourceTime = getClipSourceTime(clip, syncState.time);
-        const isActive = sourceTime !== null; // Is clip in active playback window?
-
-        desiredVideoBindings.set(clip.id, { cacheKey, clip, asset, isActive });
-
-        // CRITICAL: Add/update this clip in timeline registry (accumulate during playback)
-        this.timelineClipRegistry.set(clip.id, cacheKey);
-      } else if (asset?.type === "audio" || (clip.kind === "audio" && (clip as any).audioPath)) {
-        const key = `${clip.id}-${clip.mediaId}`;
-        desiredAudioKeys.add(key);
-      }
-    }
-
-    // DEBUG: Log timeline registry contents
-    if (this.syncCallCount % 50 === 0) {
-      console.log(`[PreviewMediaPool DEBUG] Timeline registry:`, {
-        size: this.timelineClipRegistry.size,
-        entries: Array.from(this.timelineClipRegistry.entries()),
-      });
-    }
-
-    // Remove obsolete audio elements (audio disposal is simpler, keep existing logic)
-    for (const [key, managed] of this.audios) {
-      if (!desiredAudioKeys.has(key)) {
-        this.disposeAudio(key, managed);
-      }
-    }
-
-    // Update active clip bindings and mark inactive elements
-    const newActiveBindings = new Map<string, string>();
-
-    for (const [clipId, { cacheKey, clip, asset, isActive }] of desiredVideoBindings) {
-      newActiveBindings.set(clipId, cacheKey);
-
-      // Get or create cached element
-      let managed = this.videoCache.get(cacheKey);
-      if (!managed) {
-        const sourcePath = asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path);
-        managed = this.createVideo(cacheKey, clip.id, clip.mediaId, sourcePath);
-      } else {
-        // Element exists - update its binding
-        managed.clipId = clip.id;
-        managed.lastUsedAt = performance.now();
-      }
-
-      // Mark activity state (does NOT dispose when inactive)
-      managed.isActive = isActive;
-
-      if (isActive) {
-        // Only update active elements
-        const track = this.trackMap.get(clip.trackId);
-        const isTrackMuted = track?.muted === true;
-
-        // Find primary video for audio routing
-        const activeVisibleVideoClips = clips.filter((c) => {
-          const a = assets.find((x) => x.id === c.mediaId);
-          if (!a || a.type !== "video") return false;
-          const t = this.trackMap.get(c.trackId);
-          if (t?.visible === false) return false;
-          return getClipSourceTime(c, syncState.time) !== null;
-        });
-        const primaryVideoClip = findPrimaryVideoClip(activeVisibleVideoClips, tracks);
-        const isPrimaryAudibleVideo = primaryVideoClip?.id === clip.id;
-
-        this.updateVideoElement(managed, clip, syncState, tracks, isPrimaryAudibleVideo, isTrackMuted);
-      } else {
-        // Inactive element: pause but don't dispose
-        // CRITICAL: Also update audio routing so element is ready when it becomes active
-        const track = this.trackMap.get(clip.trackId);
-        const isTrackMuted = track?.muted === true;
-        const clipVolume = clip.volume ?? 1.0;
-        const combinedVolume = (syncState.volume / 100) * clipVolume;
-
-        // Pre-configure audio for when element becomes active
-        // This prevents "no sound" issues when clips are activated
-        managed.element.muted = syncState.muted || isTrackMuted || clipVolume === 0;
-        managed.element.volume = managed.element.muted ? 0 : Math.max(0, Math.min(1, combinedVolume));
-
-        if (!managed.element.paused) {
-          managed.element.pause();
-        }
-        if (managed.rvfcHandle !== null && this.hasRVFC) {
-          try {
-            managed.element.cancelVideoFrameCallback(managed.rvfcHandle);
-          } catch {
-            // ignore
+      // If full sync with removals, clear and rebuild registry
+      if (isFullSync && structuralChange.removed.length > 0) {
+        const now = performance.now();
+        for (const removedClipId of structuralChange.removed) {
+          const cacheKey = this.timelineClipRegistry.get(removedClipId);
+          if (cacheKey) {
+            // Mark as recently removed with timestamp (for transition grace period)
+            this.recentlyRemovedClips.set(cacheKey, now);
           }
-          managed.rvfcHandle = null;
+          this.timelineClipRegistry.delete(removedClipId);
         }
-        managed.playbackState = "idle";
       }
-    }
 
-    this.activeClipBindings = newActiveBindings;
+      for (const clip of clips) {
+        const asset = assets.find((a) => a.id === clip.mediaId);
+        const track = this.trackMap.get(clip.trackId);
+        if (track?.visible === false) continue;
 
-    // FIRST: Pause inactive elements (in timeline but not currently active in playback window)
-    // This prevents multiple clips from playing simultaneously
-    const activeCacheKeys = new Set(newActiveBindings.values());
-    const timelineCacheKeys = new Set(this.timelineClipRegistry.values());
+        if (asset?.type === "video") {
+          const sourcePath = asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path);
 
-    for (const [cacheKey, managed] of this.videoCache) {
-      const isActive = activeCacheKeys.has(cacheKey);
-      const isInTimeline = timelineCacheKeys.has(cacheKey);
+          // Cache key strategy: For split clips that share media, we need separate elements
+          // to prevent rebinding conflicts during overlap. Use trimIn to differentiate.
+          const trimIn = clip.trimIn || 0;
+          const cacheKey = `${clip.mediaId}-${sourcePath}-trim${trimIn.toFixed(3)}`;
 
-      // If element is in timeline but NOT currently active, pause it
-      if (isInTimeline && !isActive && !managed.element.paused) {
-        managed.element.pause();
-        managed.playbackState = "idle";
-        if (managed.rvfcHandle !== null && this.hasRVFC) {
-          try {
-            managed.element.cancelVideoFrameCallback(managed.rvfcHandle);
-          } catch {
-            // ignore
+          const sourceTime = getClipSourceTime(clip, syncState.time);
+          const isActive = sourceTime !== null; // Is clip in active playback window?
+
+          desiredVideoBindings.set(clip.id, { cacheKey, clip, asset, isActive });
+
+          // CRITICAL: Add/update this clip in timeline registry (accumulate during playback)
+          this.timelineClipRegistry.set(clip.id, cacheKey);
+        } else if (asset?.type === "audio" || (clip.kind === "audio" && (clip as any).audioPath)) {
+          const key = `${clip.id}-${clip.mediaId}`;
+          desiredAudioKeys.add(key);
+        }
+      }
+
+      // Remove obsolete audio elements (audio disposal is simpler, keep existing logic)
+      for (const [key, managed] of this.audios) {
+        if (!desiredAudioKeys.has(key)) {
+          this.disposeAudio(key, managed);
+        }
+      }
+
+      // Update active clip bindings and mark inactive elements
+      const newActiveBindings = new Map<string, string>();
+
+      for (const [clipId, { cacheKey, clip, asset, isActive }] of desiredVideoBindings) {
+        newActiveBindings.set(clipId, cacheKey);
+
+        // Get or create cached element
+        let managed = this.videoCache.get(cacheKey);
+        if (!managed) {
+          const sourcePath = asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path);
+          managed = this.createVideo(cacheKey, clip.id, clip.mediaId, sourcePath);
+        } else {
+          // Element exists - update its binding
+          managed.clipId = clip.id;
+          managed.lastUsedAt = performance.now();
+        }
+
+        // Mark activity state (does NOT dispose when inactive)
+        managed.isActive = isActive;
+
+        if (isActive) {
+          // Only update active elements
+          const track = this.trackMap.get(clip.trackId);
+          const isTrackMuted = track?.muted === true;
+
+          // Find primary video for audio routing
+          const activeVisibleVideoClips = clips.filter((c) => {
+            const a = assets.find((x) => x.id === c.mediaId);
+            if (!a || a.type !== "video") return false;
+            const t = this.trackMap.get(c.trackId);
+            if (t?.visible === false) return false;
+            return getClipSourceTime(c, syncState.time) !== null;
+          });
+          const primaryVideoClip = findPrimaryVideoClip(activeVisibleVideoClips, tracks);
+          const isPrimaryAudibleVideo = primaryVideoClip?.id === clip.id;
+
+          this.updateVideoElement(managed, clip, syncState, tracks, isPrimaryAudibleVideo, isTrackMuted);
+        } else {
+          // Inactive element: pause but don't dispose
+          // CRITICAL: Also update audio routing so element is ready when it becomes active
+          const track = this.trackMap.get(clip.trackId);
+          const isTrackMuted = track?.muted === true;
+          const clipVolume = clip.volume ?? 1.0;
+          const combinedVolume = (syncState.volume / 100) * clipVolume;
+
+          // Pre-configure audio for when element becomes active
+          // This prevents "no sound" issues when clips are activated
+          managed.element.muted = syncState.muted || isTrackMuted || clipVolume === 0;
+          managed.element.volume = managed.element.muted ? 0 : Math.max(0, Math.min(1, combinedVolume));
+
+          if (!managed.element.paused) {
+            managed.element.pause();
           }
-          managed.rvfcHandle = null;
-        }
-      }
-    }
-
-    // SECOND: Clean up truly orphaned elements (not in timeline at all)
-    // These are elements from deleted clips or old cache entries
-    const now = performance.now();
-
-    // DEBUG: Log orphan check details
-    if (this.syncCallCount % 50 === 0) {
-      console.log(`[PreviewMediaPool DEBUG] Orphan check:`, {
-        cachedElements: Array.from(this.videoCache.keys()),
-        activeKeys: Array.from(activeCacheKeys),
-        timelineCacheKeys: Array.from(timelineCacheKeys),
-      });
-    }
-
-    for (const [cacheKey, managed] of this.videoCache) {
-      const isInGracePeriod = now < managed.registrationGraceUntil;
-      const isInTimeline = timelineCacheKeys.has(cacheKey);
-      const isRecentlyRemoved = this.recentlyRemovedClips.has(cacheKey);
-      const recentRemovalTime = this.recentlyRemovedClips.get(cacheKey);
-      const isInTransitionGrace = isRecentlyRemoved && recentRemovalTime && now - recentRemovalTime < this.TRANSITION_GRACE_PERIOD_MS;
-
-      // Only mark as orphaned if NOT in timeline AND NOT in transition grace AND past registration grace
-      if (!isInTimeline && !isInGracePeriod && !isInTransitionGrace) {
-        if (!managed.element.paused) {
-          console.log(`[PreviewMediaPool] Pausing truly orphaned element (not in timeline, grace expired): ${cacheKey}`);
-          managed.element.pause();
+          if (managed.rvfcHandle !== null && this.hasRVFC) {
+            try {
+              managed.element.cancelVideoFrameCallback(managed.rvfcHandle);
+            } catch {
+              // ignore
+            }
+            managed.rvfcHandle = null;
+          }
           managed.playbackState = "idle";
         }
-        if (managed.rvfcHandle !== null && this.hasRVFC) {
-          try {
-            managed.element.cancelVideoFrameCallback(managed.rvfcHandle);
-          } catch {
-            // ignore
+      }
+
+      this.activeClipBindings = newActiveBindings;
+
+      // FIRST: Pause inactive elements (in timeline but not currently active in playback window)
+      // This prevents multiple clips from playing simultaneously
+      const activeCacheKeys = new Set(newActiveBindings.values());
+      const timelineCacheKeys = new Set(this.timelineClipRegistry.values());
+
+      for (const [cacheKey, managed] of this.videoCache) {
+        const isActive = activeCacheKeys.has(cacheKey);
+        const isInTimeline = timelineCacheKeys.has(cacheKey);
+
+        // If element is in timeline but NOT currently active, pause it
+        if (isInTimeline && !isActive && !managed.element.paused) {
+          managed.element.pause();
+          managed.playbackState = "idle";
+          if (managed.rvfcHandle !== null && this.hasRVFC) {
+            try {
+              managed.element.cancelVideoFrameCallback(managed.rvfcHandle);
+            } catch {
+              // ignore
+            }
+            managed.rvfcHandle = null;
           }
-          managed.rvfcHandle = null;
         }
-      } else if (isInTimeline) {
-        // Element is in timeline - extend grace period (it's proven to be valid)
-        // Also remove from recently removed list since it's back in the timeline
-        this.recentlyRemovedClips.delete(cacheKey);
-        managed.registrationGraceUntil = now + 10000; // Keep grace for 10 more seconds
+      }
+
+      // SECOND: Clean up truly orphaned elements (not in timeline at all)
+      // These are elements from deleted clips or old cache entries
+      const now = performance.now();
+
+      for (const [cacheKey, managed] of this.videoCache) {
+        const isInGracePeriod = now < managed.registrationGraceUntil;
+        const isInTimeline = timelineCacheKeys.has(cacheKey);
+        const isRecentlyRemoved = this.recentlyRemovedClips.has(cacheKey);
+        const recentRemovalTime = this.recentlyRemovedClips.get(cacheKey);
+        const isInTransitionGrace = isRecentlyRemoved && recentRemovalTime && now - recentRemovalTime < this.TRANSITION_GRACE_PERIOD_MS;
+
+        // Only mark as orphaned if NOT in timeline AND NOT in transition grace AND past registration grace
+        if (!isInTimeline && !isInGracePeriod && !isInTransitionGrace) {
+          if (!managed.element.paused) {
+            managed.element.pause();
+            managed.playbackState = "idle";
+          }
+          if (managed.rvfcHandle !== null && this.hasRVFC) {
+            try {
+              managed.element.cancelVideoFrameCallback(managed.rvfcHandle);
+            } catch {
+              // ignore
+            }
+            managed.rvfcHandle = null;
+          }
+        } else if (isInTimeline) {
+          // Element is in timeline - extend grace period (it's proven to be valid)
+          // Also remove from recently removed list since it's back in the timeline
+          this.recentlyRemovedClips.delete(cacheKey);
+          managed.registrationGraceUntil = now + 10000; // Keep grace for 10 more seconds
+        }
+      }
+
+      // Clean up expired recently removed entries (older than grace period)
+      for (const [cacheKey, removalTime] of Array.from(this.recentlyRemovedClips.entries())) {
+        if (now - removalTime > this.TRANSITION_GRACE_PERIOD_MS) {
+          this.recentlyRemovedClips.delete(cacheKey);
+        }
+      }
+
+      // LRU eviction: Remove unused cached elements (not just inactive ones)
+      this.evictUnusedElements();
+
+      // Create or update audio elements (unchanged logic)
+      for (const clip of clips) {
+        const asset = assets.find((a) => a.id === clip.mediaId);
+        const directAudioPath = (clip as any).audioPath as string | undefined;
+        const isAudioClip = asset?.type === "audio" || (clip.kind === "audio" && !!directAudioPath);
+        if (!isAudioClip) continue;
+        const track = this.trackMap.get(clip.trackId);
+        if (track?.visible === false) continue;
+
+        const rawPath = asset ? asset.path : directAudioPath!;
+        const key = `${clip.id}-${clip.mediaId}`;
+        const sourcePath = rawPath.startsWith("asset://") ? rawPath : convertFileSrc(rawPath);
+
+        let managed = this.audios.get(key);
+        if (!managed) {
+          managed = this.createAudio(key, clip.id, clip.mediaId, sourcePath);
+        } else if (managed.sourcePath !== sourcePath) {
+          this.disposeAudio(key, managed);
+          managed = this.createAudio(key, clip.id, clip.mediaId, sourcePath);
+        }
+
+        if (managed) {
+          const isTrackMuted = track?.muted === true;
+          this.updateAudioElement(managed, clip, syncState, isTrackMuted);
+        }
+      }
+
+      this.lastSyncState = { ...syncState };
+
+      // ─── END OF ORIGINAL SYNC LOGIC ──────────────────────────────────────────
+    } finally {
+      // Always clear the in-progress flag, even if sync() threw an error
+      this._syncInProgress = false;
+
+      // Process queued sync request if one arrived while we were busy
+      if (this._queuedSyncRequest) {
+        const queued = this._queuedSyncRequest;
+        this._queuedSyncRequest = null; // Clear before calling to prevent infinite recursion
+
+        // Recursively call sync with the queued request
+        // This is safe because:
+        // 1. We cleared _syncInProgress (guard allows entry)
+        // 2. We cleared _queuedSyncRequest (prevents infinite loop if this sync also gets queued)
+        // 3. Only 1 level of recursion possible (queued request will complete or queue another)
+        this.sync(queued.clips, queued.assets, queued.tracks, queued.syncState);
       }
     }
-
-    // Clean up expired recently removed entries (older than grace period)
-    for (const [cacheKey, removalTime] of Array.from(this.recentlyRemovedClips.entries())) {
-      if (now - removalTime > this.TRANSITION_GRACE_PERIOD_MS) {
-        this.recentlyRemovedClips.delete(cacheKey);
-      }
-    }
-
-    // LRU eviction: Remove unused cached elements (not just inactive ones)
-    this.evictUnusedElements();
-
-    // Create or update audio elements (unchanged logic)
-    for (const clip of clips) {
-      const asset = assets.find((a) => a.id === clip.mediaId);
-      const directAudioPath = (clip as any).audioPath as string | undefined;
-      const isAudioClip = asset?.type === "audio" || (clip.kind === "audio" && !!directAudioPath);
-      if (!isAudioClip) continue;
-      const track = this.trackMap.get(clip.trackId);
-      if (track?.visible === false) continue;
-
-      const rawPath = asset ? asset.path : directAudioPath!;
-      const key = `${clip.id}-${clip.mediaId}`;
-      const sourcePath = rawPath.startsWith("asset://") ? rawPath : convertFileSrc(rawPath);
-
-      let managed = this.audios.get(key);
-      if (!managed) {
-        managed = this.createAudio(key, clip.id, clip.mediaId, sourcePath);
-      } else if (managed.sourcePath !== sourcePath) {
-        this.disposeAudio(key, managed);
-        managed = this.createAudio(key, clip.id, clip.mediaId, sourcePath);
-      }
-
-      if (managed) {
-        const isTrackMuted = track?.muted === true;
-        this.updateAudioElement(managed, clip, syncState, isTrackMuted);
-      }
-    }
-
-    this.lastSyncState = { ...syncState };
   }
 
   /**
@@ -558,6 +561,11 @@ export class PreviewMediaPool {
     if (this._isDisposed) return;
     this._isDisposed = true;
 
+    // ─── CLEAR SYNC STATE ────────────────────────────────────────────────────
+    // If sync was in progress, this disposal will be caught by the finally block
+    // But clear the queued request to prevent post-disposal sync attempts
+    this._queuedSyncRequest = null;
+
     // ─── INSTRUMENTATION: Print final diagnostics ─────────────────────────
     this.printDiagnostics();
     // ──────────────────────────────────────────────────────────────────────
@@ -588,8 +596,6 @@ export class PreviewMediaPool {
     // Record user gesture time for playback controller
     this.lastUserGestureTime = performance.now();
     this.sessionAutoplayBlocked = false;
-
-    console.log("[PreviewMediaPool] Unlocking audio from user gesture - clearing autoplay blocks");
 
     for (const managed of this.videoCache.values()) {
       // Clear autoplay block on user gesture
@@ -775,10 +781,6 @@ export class PreviewMediaPool {
     // Only one primary video clip is audible; others stay muted.
     const shouldMute = syncState.muted || syncState.volume === 0 || isTrackMuted || !isPrimaryAudibleVideo || clipVolume === 0;
 
-    if (!shouldMute && video.muted) {
-      console.log(`[PreviewMediaPool] Unmuting ${managed.clipId} - isPrimary:${isPrimaryAudibleVideo}`);
-    }
-
     video.muted = shouldMute;
     video.volume = shouldMute ? 0 : Math.max(0, Math.min(1, combinedVolume));
     video.playbackRate = syncState.speed;
@@ -828,7 +830,6 @@ export class PreviewMediaPool {
         // Force immediate resync and allow rapid subsequent seeks by setting timer to distant past
         video.currentTime = clampedTime;
         managed.lastHardSeekAtMs = now - 10000; // Set to 10s ago to allow immediate next seek
-        console.log(`[PreviewMediaPool] Large drift detected (${drift.toFixed(1)}s) - forcing resync, timer reset for rapid recovery`);
       } else if (isUserScrubbing) {
         // User scrubbing: immediate seek without rate limiting
         video.currentTime = clampedTime;
@@ -910,7 +911,6 @@ export class PreviewMediaPool {
       const now = performance.now();
       // Only clear block if we have recent user gesture
       if (now - this.lastUserGestureTime < 1000) {
-        console.log(`[PreviewMediaPool] Clearing element autoplay block for ${managed.clipId} after user gesture`);
         managed.autoplayBlocked = false;
       } else {
         managed.playbackState = "blocked";
@@ -936,12 +936,6 @@ export class PreviewMediaPool {
 
     const elementAge = now - managed.createdAt;
 
-    console.log(`[PreviewMediaPool] play() attempt #${managed.playAttempts} for ${managed.clipId}:`, {
-      elementAge: `${elementAge.toFixed(0)}ms`,
-      readyState: video.readyState,
-      source: "playback-controller",
-    });
-
     const promise = video.play();
     if (promise !== undefined) {
       promise
@@ -965,8 +959,6 @@ export class PreviewMediaPool {
             source: "playback-controller",
             result: "success",
           });
-
-          console.log(`[PreviewMediaPool] play() SUCCESS for ${managed.clipId}`);
         })
         .catch((err: Error) => {
           managed.playPromiseInFlight = false;
@@ -1053,7 +1045,6 @@ export class PreviewMediaPool {
     for (const key of toEvict) {
       const managed = this.videoCache.get(key);
       if (managed) {
-        console.log(`[PreviewMediaPool] Evicting unused element: ${key} (unused for ${((now - managed.lastUsedAt) / 1000).toFixed(1)}s, not in timeline)`);
         this.disposeVideo(key, managed);
       }
     }
@@ -1300,19 +1291,6 @@ export class PreviewMediaPool {
   }
 
   private printDiagnostics(): void {
-    console.group("[PreviewMediaPool INSTRUMENTATION] Final Diagnostics");
-    console.log(`Total sync() calls: ${this.syncCallCount}`);
-    console.log(`Total play() attempts: ${this.getTotalPlayAttempts()}`);
-    console.log(`Play attempt log size: ${this.playAttemptLog.length}`);
-
-    // Group by result
-    const byResult = {
-      success: this.playAttemptLog.filter((l) => l.result === "success").length,
-      rejected: this.playAttemptLog.filter((l) => l.result === "rejected").length,
-      pending: this.playAttemptLog.filter((l) => l.result === "pending").length,
-    };
-    console.log("Play results:", byResult);
-
     // Group failures by error type
     const failures = this.playAttemptLog.filter((l) => l.result === "rejected");
     const byError = failures.reduce(
@@ -1323,7 +1301,6 @@ export class PreviewMediaPool {
       },
       {} as Record<string, number>,
     );
-    console.log("Failure breakdown:", byError);
 
     // Show per-element stats
     const perElement = new Map<string, { attempts: number; blocked: boolean; state: string; active: boolean }>();
@@ -1335,11 +1312,9 @@ export class PreviewMediaPool {
         active: managed.isActive,
       });
     }
-    console.log("Per-element stats:", Object.fromEntries(perElement));
 
     // Show recent attempts (last 20)
     const recent = this.playAttemptLog.slice(-20);
-    console.log("Recent play attempts:", recent);
 
     console.groupEnd();
   }
@@ -1392,8 +1367,6 @@ if (typeof window !== "undefined") {
       return pools.reduce((sum: number, p: any) => sum + (p.syncCallCount || 0), 0);
     },
   };
-
-  console.log("[PreviewMediaPool] Instrumentation enabled. Use window.__previewMediaPoolInstrumentation to access diagnostics.");
 }
 // ───────────────────────────────────────────────────────────────────────────
 
