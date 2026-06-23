@@ -162,7 +162,6 @@ export class PreviewMediaPool {
 
   // Playback controller state (separate from sync)
   private sessionAutoplayBlocked = false;
-  private lastUserGestureTime = 0;
 
   /** Whether requestVideoFrameCallback is available */
   private hasRVFC = typeof HTMLVideoElement !== "undefined" && "requestVideoFrameCallback" in HTMLVideoElement.prototype;
@@ -619,8 +618,14 @@ export class PreviewMediaPool {
    * MUST be called synchronously inside a user gesture event handler (like click).
    */
   unlockAudio(): void {
-    // Record user gesture time for playback controller
-    this.lastUserGestureTime = performance.now();
+    // FINDING-024: Check if we're in an active user gesture context
+    // This is more reliable than timestamp-based checking
+    const hasUserActivation = typeof navigator !== "undefined" && navigator.userActivation && navigator.userActivation.isActive;
+
+    if (!hasUserActivation) {
+      console.warn("[PreviewMediaPool] unlockAudio() called without active user gesture - autoplay unlock may fail");
+    }
+
     this.sessionAutoplayBlocked = false;
 
     for (const managed of this.videoCache.values()) {
@@ -962,11 +967,15 @@ export class PreviewMediaPool {
 
     // Guard 4: Element-level autoplay block → latch
     if (managed.autoplayBlocked) {
-      const now = performance.now();
-      // Only clear block if we have recent user gesture
-      if (now - this.lastUserGestureTime < 1000) {
+      // FINDING-024: Check for active user gesture context instead of time window
+      // This is more reliable and handles cases where user waits >1s after unlocking
+      const hasUserActivation = typeof navigator !== "undefined" && navigator.userActivation && navigator.userActivation.isActive;
+
+      if (hasUserActivation) {
+        // We're in a user gesture context, safe to clear block and attempt play
         managed.autoplayBlocked = false;
       } else {
+        // No active user gesture, keep the block
         return;
       }
     }
