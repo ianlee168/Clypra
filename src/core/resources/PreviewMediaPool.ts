@@ -998,6 +998,9 @@ export class PreviewMediaPool {
    * Only evict elements that are both:
    * 1. Not referenced by any clip in timeline registry
    * 2. Either too old OR cache is over capacity
+   *
+   * FINDING-018 FIX: Enforce hard limit even if all elements protected.
+   * Prefer evicting inactive elements but respect MAX_CACHED_VIDEOS limit.
    */
   private evictUnusedElements(): void {
     const now = performance.now();
@@ -1006,7 +1009,7 @@ export class PreviewMediaPool {
     // Build set of cache keys that are protected (referenced by timeline clips)
     const protectedCacheKeys = new Set(this.timelineClipRegistry.values());
 
-    // Find candidates: unused for CACHE_EVICTION_AGE_MS AND not in timeline
+    // PASS 1: Find candidates - unused for CACHE_EVICTION_AGE_MS AND not in timeline
     for (const [key, managed] of this.videoCache) {
       // NEVER evict elements for clips still in timeline
       if (protectedCacheKeys.has(key)) {
@@ -1019,7 +1022,7 @@ export class PreviewMediaPool {
       }
     }
 
-    // If still over limit, evict oldest unprotected first
+    // PASS 2: If still over limit after age-based eviction, evict oldest unprotected first
     if (this.videoCache.size > this.MAX_CACHED_VIDEOS) {
       // Only consider unprotected elements for eviction
       const unprotectedElements = Array.from(this.videoCache.entries())
@@ -1029,6 +1032,38 @@ export class PreviewMediaPool {
       const excess = this.videoCache.size - this.MAX_CACHED_VIDEOS;
       for (let i = 0; i < Math.min(excess, unprotectedElements.length); i++) {
         const key = unprotectedElements[i][0];
+        if (!toEvict.includes(key)) {
+          toEvict.push(key);
+        }
+      }
+    }
+
+    // PASS 3 (FINDING-018 FIX): If STILL over limit, evict oldest protected BUT INACTIVE elements
+    // This enforces the hard MAX limit even when all elements are in timeline
+    if (this.videoCache.size - toEvict.length > this.MAX_CACHED_VIDEOS) {
+      const protectedInactiveElements = Array.from(this.videoCache.entries())
+        .filter(([key, managed]) => protectedCacheKeys.has(key) && !managed.isActive)
+        .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+
+      const remaining = this.videoCache.size - toEvict.length - this.MAX_CACHED_VIDEOS;
+      for (let i = 0; i < Math.min(remaining, protectedInactiveElements.length); i++) {
+        const key = protectedInactiveElements[i][0];
+        if (!toEvict.includes(key)) {
+          toEvict.push(key);
+        }
+      }
+    }
+
+    // PASS 4 (FINDING-018 FIX): Last resort - if STILL over limit, evict oldest protected ACTIVE elements
+    // This should rarely happen but prevents unbounded growth
+    if (this.videoCache.size - toEvict.length > this.MAX_CACHED_VIDEOS) {
+      const protectedActiveElements = Array.from(this.videoCache.entries())
+        .filter(([key, managed]) => protectedCacheKeys.has(key) && managed.isActive)
+        .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+
+      const remaining = this.videoCache.size - toEvict.length - this.MAX_CACHED_VIDEOS;
+      for (let i = 0; i < Math.min(remaining, protectedActiveElements.length); i++) {
+        const key = protectedActiveElements[i][0];
         if (!toEvict.includes(key)) {
           toEvict.push(key);
         }

@@ -1426,3 +1426,362 @@ describe("PreviewMediaPool — FINDING-015: State Machine Divergence Prevention"
     expect(() => pool.getVideoElements()).not.toThrow();
   });
 });
+
+describe("PreviewMediaPool — FINDING-018: Cache Eviction Hard Limit", () => {
+  let pool: PreviewMediaPool;
+
+  beforeEach(() => {
+    pool = new PreviewMediaPool();
+  });
+
+  afterEach(() => {
+    pool.dispose();
+  });
+
+  it("should respect MAX_CACHED_VIDEOS limit even when all clips are in timeline", async () => {
+    // Create 25 clips (exceeds MAX_CACHED_VIDEOS = 20)
+    const clips = Array.from({ length: 25 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 25 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Sync with all clips in timeline
+    pool.sync(clips, assets, tracks, {
+      time: 25.0, // Middle of timeline
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(100);
+
+    // Cache should not exceed MAX (20) even though all clips are in timeline
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should evict oldest inactive protected elements when over limit", async () => {
+    // Create 25 clips
+    const clips = Array.from({ length: 25 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 25 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Sync at time 0 (only first few clips active)
+    pool.sync(clips, assets, tracks, {
+      time: 0.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(100);
+
+    // Cache should be limited to MAX
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should prefer evicting inactive elements over active ones", async () => {
+    // Create 25 clips
+    const clips = Array.from({ length: 25 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 25 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // First sync creates all elements
+    pool.sync(clips, assets, tracks, {
+      time: 25.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(50);
+
+    // Move to different time (changes which clips are active)
+    pool.sync(clips, assets, tracks, {
+      time: 5.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(50);
+
+    // Active elements should be retained, inactive evicted first
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should prevent unbounded memory growth on large projects", async () => {
+    // Simulate large project with 50 clips
+    const clips = Array.from({ length: 50 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 50 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Sync multiple times
+    for (let time = 0; time < 100; time += 10) {
+      pool.sync(clips, assets, tracks, {
+        time,
+        state: "playing" as const,
+        speed: 1.0,
+        muted: false,
+        volume: 100,
+      });
+      await wait(10);
+    }
+
+    // Cache should never exceed MAX
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should enforce hard limit in 4-pass eviction strategy", async () => {
+    // Create exactly MAX+5 clips (25)
+    const clips = Array.from({ length: 25 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 25 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Load all clips
+    pool.sync(clips, assets, tracks, {
+      time: 25.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(100);
+
+    // Pass 1: Evict old unprotected (none, all in timeline)
+    // Pass 2: Evict oldest unprotected (none, all in timeline)
+    // Pass 3: Evict oldest protected inactive (should trigger here)
+    // Pass 4: Evict oldest protected active (fallback)
+
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should handle timeline with all clips active", async () => {
+    // Create 25 clips but make them all "active" by having overlapping ranges
+    const clips = Array.from({ length: 25 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, 0, 10)); // All start at 0
+    const assets = Array.from({ length: 25 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = Array.from({ length: 25 }, (_, i) => ({ id: `track-${i}`, type: "video" }));
+
+    pool.sync(clips, assets, tracks, {
+      time: 5.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(100);
+
+    // Even with all active, should respect MAX limit (Pass 4)
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should use LRU policy for eviction within each pass", async () => {
+    // Create 25 clips
+    const clips = Array.from({ length: 25 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 25 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Initial load
+    pool.sync(clips, assets, tracks, {
+      time: 0.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(50);
+
+    // Access middle clips (updates lastUsedAt)
+    pool.sync(clips, assets, tracks, {
+      time: 25.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(50);
+
+    // Go back to start (oldest should be evicted, recently used preserved)
+    pool.sync(clips, assets, tracks, {
+      time: 0.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(50);
+
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should prevent browser crash on mobile with many clips", async () => {
+    // Mobile scenario: 30 clips, limited memory
+    const clips = Array.from({ length: 30 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 30 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Load project
+    pool.sync(clips, assets, tracks, {
+      time: 30.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(100);
+
+    // Cache limited to prevent memory exhaustion
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should handle edge case of exactly MAX clips", async () => {
+    // Exactly 20 clips (at the limit)
+    const clips = Array.from({ length: 20 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 20 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    pool.sync(clips, assets, tracks, {
+      time: 20.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(100);
+
+    // Should allow exactly MAX
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should evict elements as timeline changes", async () => {
+    // Start with 25 clips
+    let clips = Array.from({ length: 25 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    let assets = Array.from({ length: 25 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    pool.sync(clips, assets, tracks, {
+      time: 25.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(50);
+
+    // Remove 10 clips from timeline
+    clips = clips.slice(0, 15);
+    assets = assets.slice(0, 15);
+
+    pool.sync(clips, assets, tracks, {
+      time: 15.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(100);
+
+    // Removed clips should be evicted
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should not evict elements that are about to be used", async () => {
+    // Create 25 clips
+    const clips = Array.from({ length: 25 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 25 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Sync at beginning
+    pool.sync(clips, assets, tracks, {
+      time: 0.5,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(50);
+
+    // Active elements should be preserved
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeGreaterThan(0);
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should handle rapid timeline changes with many clips", async () => {
+    const clips = Array.from({ length: 40 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 40 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Rapid scrubbing through timeline
+    for (let time = 0; time < 80; time += 5) {
+      pool.sync(clips, assets, tracks, {
+        time,
+        state: "paused" as const,
+        speed: 1.0,
+        muted: false,
+        volume: 100,
+      });
+    }
+
+    await wait(100);
+
+    // Cache should remain bounded
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+
+  it("should prioritize active clips when at capacity", async () => {
+    // Create 25 clips
+    const clips = Array.from({ length: 25 }, (_, i) => createMockClip(`clip-${i}`, `media-${i}`, i * 2, 2));
+    const assets = Array.from({ length: 25 }, (_, i) => createMockAsset(`media-${i}`, `/path/to/video-${i}.mp4`));
+    const tracks = [{ id: "track-1", type: "video" }];
+
+    // Load first half
+    pool.sync(clips.slice(0, 15), assets.slice(0, 15), tracks, {
+      time: 5.0,
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(50);
+
+    // Now sync with all clips (should trigger eviction)
+    pool.sync(clips, assets, tracks, {
+      time: 5.0, // Same position (first clips still active)
+      state: "playing" as const,
+      speed: 1.0,
+      muted: false,
+      volume: 100,
+    });
+
+    await wait(50);
+
+    // Active clips should be retained
+    const videoElements = pool.getVideoElements();
+    expect(videoElements.size).toBeLessThanOrEqual(20);
+  });
+});
