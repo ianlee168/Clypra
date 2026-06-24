@@ -484,6 +484,14 @@ export class PreviewMediaPool {
         const isRecentlyRemoved = recentRemoval !== undefined;
         const isInTransitionGrace = isRecentlyRemoved && recentRemoval && now - recentRemoval.timestamp < this.TRANSITION_GRACE_PERIOD_MS;
 
+        // CRITICAL FIX: Elements in grace period must respect playback state
+        // If user pauses, grace-period elements must also pause (prevents audio bleed)
+        if (isInTransitionGrace && syncState.state !== "playing") {
+          if (!managed.element.paused) {
+            managed.element.pause();
+          }
+        }
+
         // Only mark as orphaned if NOT in timeline AND NOT in transition grace AND past registration grace
         if (!isInTimeline && !isInGracePeriod && !isInTransitionGrace) {
           if (!managed.element.paused) {
@@ -795,9 +803,11 @@ export class PreviewMediaPool {
     video.addEventListener(
       "loadedmetadata",
       () => {
+        console.log(`📹 [PREVIEW MEDIA POOL] Video metadata loaded for ${key.substring(0, 50)}..., marking ready=true`);
         managed.ready = true;
         import("../../store/timelineStore")
           .then(({ useTimelineStore }) => {
+            console.log(`📹 [PREVIEW MEDIA POOL] Incrementing epoch after video metadata loaded`);
             useTimelineStore.getState().incrementEpoch();
           })
           .catch((err) => {
@@ -823,12 +833,12 @@ export class PreviewMediaPool {
 
     video.addEventListener(
       "error",
-      () => {
+      (e) => {
         // Ignore expected teardown/HMR errors when src is intentionally cleared.
         if (managed.disposing || !video.currentSrc) {
           return;
         }
-        console.error(`[PreviewMediaPool] Video load error: ${key}`, video.error);
+        console.error(`❌ [PreviewMediaPool] Video load error: ${key}`, video.error, e);
       },
       { once: true },
     );
@@ -836,6 +846,7 @@ export class PreviewMediaPool {
     video.addEventListener(
       "seeked",
       () => {
+        console.log(`📹 [PREVIEW MEDIA POOL] Video seeked for ${key.substring(0, 50)}...`);
         if (video.paused) {
           import("../../store/timelineStore")
             .then(({ useTimelineStore }) => {
@@ -849,9 +860,11 @@ export class PreviewMediaPool {
       { once: true }, // Auto-remove listener after first seek to prevent leak
     );
 
+    console.log(`📹 [PREVIEW MEDIA POOL] Setting video.src = ${sourcePath.substring(0, 100)}...`);
     video.src = sourcePath;
 
     // Explicitly trigger video load
+    console.log(`📹 [PREVIEW MEDIA POOL] Calling video.load() to trigger metadata loading`);
     video.load();
 
     this.container.appendChild(video);

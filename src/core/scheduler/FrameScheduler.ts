@@ -22,6 +22,7 @@ import { getResourceCache } from "../resources/ResourceCache";
 import { getFontLoader } from "../fonts/FontLoader";
 import { textRenderTrace } from "@/lib/debug/textRenderTrace";
 import { performanceMonitor } from "@/lib/debug/performanceMonitor";
+import { convertFileSrc } from "@tauri-apps/api/core";
 
 /**
  * Frame job status.
@@ -130,6 +131,10 @@ export class FrameScheduler {
   private project: Project | null = null;
   private epoch: number = 0;
 
+  // Persistent resource handle cache (survives frame evaluations)
+  // Maps sourcePath → RenderResourceHandle to avoid O(n) getHandleForUrl() searches
+  private persistentResourceHandles = new Map<string, RenderResourceHandle>();
+
   // Telemetry
   private stats = {
     totalJobs: 0,
@@ -156,6 +161,12 @@ export class FrameScheduler {
    * Must be called before scheduling frames.
    */
   updateTimeline(clips: Clip[], tracks: Track[], assets: MediaAsset[], project: Project | null, epoch: number, transitions: TransitionTimelineItem[] = []): void {
+    // Clean up orphaned resource handles when epoch changes (clips deleted/modified)
+    const epochDelta = epoch - this.epoch;
+    if (epochDelta > 0 && this.persistentResourceHandles.size > 0) {
+      this.cleanupOrphanedResourceHandles(clips, assets);
+    }
+
     this.clips = clips;
     this.tracks = tracks;
     this.assets = assets;
@@ -601,6 +612,39 @@ export class FrameScheduler {
   }
 
   /**
+   * Remove resource handles for sourcePaths no longer in timeline.
+   * Called when epoch changes (clips added/removed/modified).
+   * O(n+m) complexity using asset map to avoid nested loops.
+   */
+  private cleanupOrphanedResourceHandles(clips: Clip[], assets: MediaAsset[]): void {
+    // Build asset map once - O(m)
+    const assetMap = new Map(assets.map((a) => [a.id, a]));
+
+    // Build set of active sourcePaths - O(n)
+    const activeSourcePaths = new Set<string>();
+    for (const clip of clips) {
+      const asset = assetMap.get(clip.mediaId);
+      if (asset) {
+        const sourcePath = asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path);
+        activeSourcePaths.add(sourcePath);
+      }
+    }
+
+    // Remove orphaned handles - O(p) where p = persistent cache size
+    let removedCount = 0;
+    for (const [sourcePath] of Array.from(this.persistentResourceHandles.entries())) {
+      if (!activeSourcePaths.has(sourcePath)) {
+        this.persistentResourceHandles.delete(sourcePath);
+        removedCount++;
+      }
+    }
+
+    if (this.config.debug && removedCount > 0) {
+      console.log(`[FrameScheduler] Cleaned ${removedCount} orphaned resource handle(s)`);
+    }
+  }
+
+  /**
    * Pre-load resources for a frame.
    * Analyzes the scene and pre-loads all media resources.
    * Tracks acquired handles on the job for release after rasterization.
@@ -678,8 +722,27 @@ export class FrameScheduler {
         // For images, use "image-bitmap". For videos without elements, use "video-element"
         const type = layer.mediaType === "video" ? "video-element" : "image-bitmap";
 
+        // NEW: Check persistent cache FIRST (O(1) map lookup)
+        let cachedHandle = this.persistentResourceHandles.get(layer.sourcePath);
+
+        if (cachedHandle) {
+          // Try to increment ref without O(n) search (FAST PATH)
+          if (resourceCache.incrementRef(cachedHandle)) {
+            // Handle still valid - use it without calling acquire()
+            job.acquiredResourceHandles.push(cachedHandle);
+            layerResourceHandles.set(layer.layerId, cachedHandle);
+            continue; // Skip acquire - avoids O(n) getHandleForUrl() iteration
+          } else {
+            // Handle was evicted from resource cache - remove from persistent map
+            this.persistentResourceHandles.delete(layer.sourcePath);
+          }
+        }
+
+        // Not in persistent cache or was evicted - acquire new (O(n) search, but only once per sourcePath)
         const loadPromise = Promise.race([
           resourceCache.acquire(layer.sourcePath, type).then((handle) => {
+            // Store in persistent cache for next frame
+            this.persistentResourceHandles.set(layer.sourcePath, handle);
             // Track acquired handle for release after rasterization
             job.acquiredResourceHandles.push(handle);
             // ✅ FIX: Store the handle so we can attach it to the layer
