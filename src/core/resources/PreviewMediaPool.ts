@@ -1234,14 +1234,21 @@ export class PreviewMediaPool {
       // Recalculate expected source time based on latest clock state
       const latestSyncState = this.lastSyncState ?? syncState;
 
-      // Reconstruct clip time calculation without capturing entire clip object
-      const timelineTime = latestSyncState.time;
-      let currentSourceTime: number | null = null;
-      if (timelineTime >= clipStartTime && timelineTime < clipStartTime + clipDuration) {
-        currentSourceTime = trimIn + (timelineTime - clipStartTime);
-      }
+      // FIX (FINDING-012): Use canonical sourceTime calculation instead of inline duplicate
+      // Build minimal clip object for sourceTime resolution
+      const minimalClip: Pick<Clip, "startTime" | "duration" | "trimIn" | "trimOut"> = {
+        startTime: clipStartTime,
+        duration: clipDuration,
+        trimIn,
+        trimOut: trimIn + clipDuration, // Reconstruct trimOut from duration
+      };
 
-      if (currentSourceTime === null) return;
+      const { sourceTime: currentSourceTime, active } = resolveClipSourceTime(minimalClip, latestSyncState.time, {
+        clampToRange: true,
+        frameRate: latestSyncState.frameRate,
+      });
+
+      if (!active) return;
 
       const clampedExpected = Number.isFinite(video.duration) && video.duration > 0 ? Math.max(0, Math.min(currentSourceTime, video.duration - 0.001)) : currentSourceTime;
 
