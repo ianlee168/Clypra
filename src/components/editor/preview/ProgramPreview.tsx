@@ -484,78 +484,38 @@ export const ProgramPreview: React.FC = () => {
       const playbackSpeed = state.clock.speed;
       const timeChanged = timeToRenderRounded !== lastRenderedTime;
       const epochChanged = state.epoch !== lastRenderedEpoch;
-      // CRITICAL: First frame is when we haven't rendered with clips yet
-      // This handles both initial mount AND project loading where clips arrive later
       const isFirstFrame = !hasRenderedWithClips && state.clips.length > 0;
+      const playbackStateChanged = lastRenderedPlaybackState !== playbackState;
+      const needsSync = epochChanged || playbackStateChanged || isFirstFrame;
 
-      console.log(`[PREVIEW DEBUG] RAF tick: time=${timeToRenderRounded.toFixed(2)}, lastTime=${lastRenderedTime}, timeChanged=${timeChanged}, epoch=${state.epoch}, lastEpoch=${lastRenderedEpoch}, epochChanged=${epochChanged}, isPlaying=${isPlaying}, isFirstFrame=${isFirstFrame}, hasRenderedWithClips=${hasRenderedWithClips}, clips=${state.clips.length}`);
+      // Get session once for both sync and render operations
+      const session = getActiveSessionOrNull();
 
-      // ═══════════════════════════════════════════════════════════════════════════════
-      // 🐛 CRITICAL FIX: Prevent Race Condition on First Frame Render
-      // ═══════════════════════════════════════════════════════════════════════════════
-      //
-      // PROBLEM:
-      // When adding the first video clip to an empty timeline:
-      // 1. addClip() → epoch++ (triggers render)
-      // 2. ProgramPreview detects epochChanged → needsRender=true
-      // 3. sync() is called → Creates <video> element (ready=false, metadata loading async)
-      // 4. render() tries immediately → ❌ Rasterizer can't find element (not ready!)
-      // 5. [Later] loadedmetadata fires → ready=true → epoch++ again
-      // 6. Another render happens → ✅ Now works
-      //
-      // CONSEQUENCE WITHOUT FIX:
-      // - Console warnings: "No video element" for clip..."
-      // - Unstable first frame (flickers or shows empty canvas)
-      // - Poor UX when dragging first video to timeline
-      //
-      // SOLUTION:
-      // Wait for video elements to reach readyState >= 1 (HAVE_METADATA) before first render.
-      // The RAF loop continues running and checks on every frame until ready.
-      //
-      // THREE STATES:
-      // 1. No elements exist yet → Proceed (sync will create them)
-      // 2. Elements exist but not ready (readyState < 1) → WAIT ⏳
-      // 3. Elements exist and ready (readyState >= 1) → Proceed ✅
-      //
-      // WHY THIS WORKS:
-      // - PreviewMediaPool.createVideo() calls incrementEpoch() on loadedmetadata event
-      // - This triggers RAF loop to re-evaluate → finds ready element → renders
-      // - Typical delay: 10-50ms for metadata to load
-      // - User sees stable first frame immediately when ready
-      //
-      // VIDEO ELEMENT READYSTATE VALUES:
-      // 0 = HAVE_NOTHING    - No information about media
-      // 1 = HAVE_METADATA   - Duration, dimensions available ✅ Minimum for render
-      // 2 = HAVE_CURRENT    - Data for current frame available
-      // 3 = HAVE_FUTURE     - Data for current + next frame available
-      // 4 = HAVE_ENOUGH     - Can play through without stalling
-      //
-      // TESTED SCENARIOS:
-      // ✅ Add first video to empty timeline
-      // ✅ Add video while playing
-      // ✅ Add multiple videos simultaneously
-      // ✅ Switch between projects
-      // ✅ Re-open existing project
-      // ✅ Mixed audio/video clips
-      //
-      // PERFORMANCE IMPACT:
-      // - Adds ~0.5ms per RAF tick when waiting (negligible)
-      // - Only active on isFirstFrame (one-time check)
-      // - No impact on steady playback
-      //
-      // TEST FILE: src/components/editor/preview/__tests__/firstFrameRender.test.ts
-      // ═══════════════════════════════════════════════════════════════════════════════
+      // Sync media elements first (before readiness check)
+      if (needsSync) {
+        if (session && session.state === "active") {
+          try {
+            session.syncPreviewMedia(getPreviewMediaSyncClips(state.clips, timeToRenderRounded), state.mediaAssets, state.tracks, {
+              time: timeToRenderRounded,
+              state: playbackState,
+              speed: playbackSpeed,
+              muted: isMuted,
+              volume,
+              frameRate: state.project?.frameRate ?? 30,
+            });
+          } catch (error) {
+            console.error(`[PreviewPanel ERROR] Exception calling syncPreviewMedia:`, error);
+          }
+        }
+      }
 
       let waitingForVideoReady = false;
 
-      // Check video readiness on first frame with clips
+      // Check video readiness on first frame (after sync has created elements)
       if (isFirstFrame) {
-        console.log(`[PREVIEW DEBUG] Checking video element readiness: isFirstFrame=${isFirstFrame}`);
-        const session = getActiveSessionOrNull();
         if (session) {
           const videoElements = session.getPreviewVideoElements();
           const videoClips = state.clips.filter((c) => c.kind === "video");
-          console.log(`[PREVIEW DEBUG] Found ${videoClips.length} video clips, ${videoElements.size} video elements`);
 
           if (videoClips.length > 0) {
             let hasAnyVideoElement = false;
@@ -567,60 +527,35 @@ export const ProgramPreview: React.FC = () => {
 
               if (element) {
                 hasAnyVideoElement = true;
-                // console.log(`📹 [PREVIEW RENDER] Found video element for ${clip.id}, readyState=${element.readyState}, networkState=${element.networkState}, src=${element.src ? "SET" : "NOT SET"}`);
-
-                // readyState >= HAVE_METADATA (1) means width, height, duration are available
-                // This is the minimum state needed for reliable frame extraction
                 if (element.readyState >= 1) {
                   hasReadyVideo = true;
-                  break; // Optimistic: Stop at first ready element
+                  break;
                 }
-              } else {
-                // console.log(`📹 [PREVIEW RENDER] No video element found for ${clip.id} (key: ${key})`);
               }
             }
 
-            // CRITICAL DECISION LOGIC:
-            // - hasAnyVideoElement=false → Don't wait (sync hasn't created elements yet)
-            // - hasAnyVideoElement=true, hasReadyVideo=false → WAIT (elements loading metadata)
-            // - hasAnyVideoElement=true, hasReadyVideo=true → Don't wait (at least one ready)
             waitingForVideoReady = hasAnyVideoElement && !hasReadyVideo;
 
-            console.log(`[PREVIEW DEBUG] Video readiness check: hasAnyVideoElement=${hasAnyVideoElement}, hasReadyVideo=${hasReadyVideo}, waitingForVideoReady=${waitingForVideoReady}`);
-
             if (waitingForVideoReady) {
-              // console.log(`⏳ [PREVIEW RENDER LOOP] Waiting for video elements to load metadata (readyState check)...`);
+              console.log(`⏳ [PREVIEW RENDER LOOP] Waiting for video elements to load metadata (readyState check)...`);
             } else if (!hasAnyVideoElement) {
-              // console.log(`📹 [PREVIEW RENDER] No video elements created yet, will proceed to create them in sync`);
+              console.warn(`📹 [PREVIEW RENDER] No video elements found after sync - this should not happen`);
+            } else {
+              console.log(`✅ [PREVIEW RENDER] Video ready, found ${videoClips.length} video clips with ${videoElements.size} elements`);
             }
           }
         }
       }
 
-      // Render decision: All normal conditions PLUS not waiting for video elements
       const needsRender = (isPlaying || timeChanged || epochChanged || isFirstFrame) && !waitingForVideoReady;
 
-      console.log(`[PREVIEW DEBUG] Render decision: needsRender=${needsRender}, waitingForVideoReady=${waitingForVideoReady}, hasClips=${state.clips.length > 0}`);
-
-      // LOG: Detailed render decision tracking
-      // if (epochChanged || isFirstFrame || timeChanged) {
-      //   console.log(`🎥 [PREVIEW RENDER LOOP] Render decision:`, {
-      //     timeToRender: timeToRenderRounded,
-      //     isPlaying,
-      //     timeChanged,
-      //     epochChanged: epochChanged ? `${lastRenderedEpoch} → ${state.epoch}` : false,
-      //     isFirstFrame,
-      //     waitingForVideoReady,
-      //     needsRender,
-      //     lastRenderedTime,
-      //   });
-      // }
-
-      if (forceRenderNeeded) {
-        forceRenderNeeded = false;
+      if (!needsRender) {
+        rafId = requestAnimationFrame(renderLoop);
+        return;
       }
 
-      // Get the active track-level filter at the rendering time
+      rafId = requestAnimationFrame(renderLoop);
+
       const getActiveFilterIR = (time: number) => {
         const filterTracks = state.tracks.filter((t: any) => t.type === "filter" && (t.visible ?? true));
         const filterTrackIds = new Set(filterTracks.map((t: any) => t.id));
@@ -638,66 +573,6 @@ export const ProgramPreview: React.FC = () => {
         }
         return undefined;
       };
-
-      // ─── FINDING-009: Separate needsSync from needsRender ─────────────────────────
-      // sync() is about ELEMENT LIFECYCLE (create/dispose/bind clips to elements)
-      // It should only run when:
-      // - Playback state changes (play/pause/stop)
-      // - Epoch changes (clips added/removed/modified)
-      // - Time crosses clip boundary (clip becomes active/inactive)
-      //
-      // render() is about FRAME SCHEDULING (rasterize current frame)
-      // It should run when:
-      // - Playing (every frame)
-      // - Time changed (seek)
-      // - Epoch changed (visual update needed)
-      // - First frame
-      //
-      // During steady playback, needsRender=true every frame but needsSync=false
-      // This reduces sync() calls from 60fps to ~1-10fps (only on actual state changes)
-      const playbackStateChanged = lastRenderedPlaybackState !== playbackState;
-      const needsSync = epochChanged || playbackStateChanged || isFirstFrame;
-
-      // Only render if something changed or we're playing
-      // This prevents infinite RAF loops when idle
-      if (!needsRender) {
-        console.log(`[PREVIEW DEBUG] Skipping render - needsRender=false`);
-        rafId = requestAnimationFrame(renderLoop);
-        return;
-      }
-
-      console.log(`[PREVIEW DEBUG] Proceeding to render at time=${timeToRenderRounded.toFixed(2)}`);
-
-      rafId = requestAnimationFrame(renderLoop);
-
-      // Get session once for both sync and render operations
-      const session = getActiveSessionOrNull();
-
-      // Sync media elements ONLY when lifecycle changes (not every frame)
-      if (needsSync) {
-        // console.log(`🔄 [PREVIEW SYNC] Syncing media elements:`, {
-        //   timeToRender: timeToRenderRounded,
-        //   playbackState,
-        //   epochChanged,
-        //   playbackStateChanged,
-        //   isFirstFrame,
-        //   clipsToSync: getPreviewMediaSyncClips(state.clips, timeToRenderRounded).length,
-        // });
-        if (session && session.state === "active") {
-          try {
-            session.syncPreviewMedia(getPreviewMediaSyncClips(state.clips, timeToRenderRounded), state.mediaAssets, state.tracks, {
-              time: timeToRenderRounded,
-              state: playbackState,
-              speed: playbackSpeed,
-              muted: isMuted,
-              volume,
-              frameRate: state.project?.frameRate ?? 30,
-            });
-          } catch (error) {
-            console.error(`[PreviewPanel ERROR] Exception calling syncPreviewMedia:`, error);
-          }
-        }
-      }
 
       // Check isRendering AFTER sync to prevent render race conditions
       if (isRendering) {
