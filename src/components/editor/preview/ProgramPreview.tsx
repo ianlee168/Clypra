@@ -146,6 +146,11 @@ export const ProgramPreview: React.FC = () => {
   const originalCanvasDimsRef = useRef<{ width: number; height: number } | null>(null);
   const prevDurationRef = useRef<number>(0);
   const prevFrameRateRef = useRef<number>(0);
+  // PB-BUG-005: Refs for isMuted/volume to avoid render loop teardown on change
+  const isMutedRef = useRef(isMuted);
+  const volumeRef = useRef(volume);
+  isMutedRef.current = isMuted;
+  volumeRef.current = volume;
 
   const renderStateRef = useRef({
     clips,
@@ -499,8 +504,8 @@ export const ProgramPreview: React.FC = () => {
               time: timeToRenderRounded,
               state: playbackState,
               speed: playbackSpeed,
-              muted: isMuted,
-              volume,
+              muted: isMutedRef.current,
+              volume: volumeRef.current,
               frameRate: state.project?.frameRate ?? 30,
             });
           } catch (error) {
@@ -539,7 +544,13 @@ export const ProgramPreview: React.FC = () => {
         }
       }
 
-      const needsRender = (isPlaying || timeChanged || epochChanged || isFirstFrame) && !waitingForVideoReady;
+      // PREV-BUG-001 fix: Include forceRenderNeeded in render decision.
+      // The clock subscriber sets this flag on seek, ensuring seeks within the
+      // same 10ms quantization bucket still trigger a re-render.
+      const needsRender = (isPlaying || timeChanged || epochChanged || isFirstFrame || forceRenderNeeded) && !waitingForVideoReady;
+
+      // Consume the flag after checking (regardless of whether we render)
+      if (forceRenderNeeded) forceRenderNeeded = false;
 
       if (!needsRender) {
         rafId = requestAnimationFrame(renderLoop);
@@ -689,15 +700,21 @@ export const ProgramPreview: React.FC = () => {
       if (rafId !== null) cancelAnimationFrame(rafId);
       if (lastJobId) scheduler.cancel(lastJobId);
     };
-  }, [useCanvasPreview, project, canvasWidth, canvasHeight, displayWidth, displayHeight, canvasEl, isMuted, volume]);
+  }, [useCanvasPreview, project, canvasWidth, canvasHeight, displayWidth, displayHeight, canvasEl]);
+  // PB-BUG-005: isMuted and volume intentionally NOT in deps — read from refs
 
   // ── Clear selection when playback starts ──────────────────────────────
   // Transform overlays should not be visible during playback
+  // PB-BUG-007 fix: Use imperative clock.state read instead of throttled
+  // clockState to avoid the delayed clearSelection race condition.
   useEffect(() => {
-    if (clockState.state === "playing") {
-      clearSelection();
-    }
-  }, [clockState.state, clearSelection]);
+    const unsubscribe = clock.subscribe((state) => {
+      if (state.state === "playing") {
+        clearSelection();
+      }
+    });
+    return unsubscribe;
+  }, [clock, clearSelection]);
 
   // ── Pause when app loses foreground ────────────────────────────────────
   // Desktop webviews throttle RAF/media heavily when hidden or unfocused.
