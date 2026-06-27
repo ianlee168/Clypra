@@ -1,6 +1,6 @@
 import type { Clip } from "@/types";
 
-export const PREVIEW_MEDIA_LOOKAHEAD_SECONDS = 0.75;
+export const PREVIEW_MEDIA_LOOKAHEAD_SECONDS = 1.5;
 export const PREVIEW_MEDIA_RETENTION_SECONDS = 0.25;
 
 // ─── FINDING-010: Memoize clip filtering ─────────────────────────────────────
@@ -11,12 +11,9 @@ const clipFilterCache = new Map<string, Clip[]>();
 const MAX_CACHE_SIZE = 100; // Limit cache growth (100 entries = ~1.67 seconds at 60fps)
 
 export function getPreviewMediaSyncClips(clips: Clip[], time: number): Clip[] {
-  // PREV-BUG-006 fix: Cache key includes clip identity (first+last IDs) alongside count.
-  // Using only clips.length caused collisions when clips were replaced with same-count arrays.
-  // First+last IDs provide O(1) identity without hashing every clip.
-  const firstId = clips.length > 0 ? clips[0].id : "";
-  const lastId = clips.length > 1 ? clips[clips.length - 1].id : "";
-  const cacheKey = `${time.toFixed(1)}-${clips.length}-${firstId}-${lastId}`;
+  // ER-HIDDEN-001 fix: Use all clip IDs to construct cache key to prevent collisions on undo/redo
+  const clipIdsHash = clips.map((c) => c.id).join(",");
+  const cacheKey = `${time.toFixed(1)}-${clips.length}-${clipIdsHash}`;
 
   // Check cache first (hot path - saves ~0.5-1ms per frame × 60fps)
   if (clipFilterCache.has(cacheKey)) {

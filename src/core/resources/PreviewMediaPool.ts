@@ -33,6 +33,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { resolveClipSourceTime } from "../timeline/sourceTime";
 import { performanceMonitor } from "@/lib/monitoring/PerformanceMonitor";
 import { resourceTracker } from "@/lib/monitoring/ResourceTracker";
+import { useTimelineStore } from "../../store/timelineStore";
 
 export interface PreviewSyncState {
   /** Current playback time (seconds) */
@@ -290,7 +291,8 @@ export class PreviewMediaPool {
       // ─── FINDING-006: Early exit optimization (fast path) ───────────────────
       // Skip expensive reconciliation if nothing meaningful changed
       // Round time to 0.1s precision to avoid rehashing every frame during playback
-      const quickHash = `${syncState.time.toFixed(1)}-${syncState.state}-${clips.length}`;
+      const clipIdsHash = clips.map((c) => `${c.id}:${c.startTime.toFixed(2)}:${c.trimIn.toFixed(2)}`).join(",");
+      const quickHash = `${syncState.time.toFixed(1)}-${syncState.state}-${clips.length}-${clipIdsHash}`;
       // CRITICAL: Only use fast path if we have video elements already created.
       // This prevents skipping the first sync after project load when elements need creation.
       const hasVideoElements = this.videoCache.size > 0;
@@ -387,7 +389,11 @@ export class PreviewMediaPool {
             existingRemoval.clipIds.push(clip.id);
           }
         } else if (asset?.type === "audio" || (clip.kind === "audio" && (clip as any).audioPath)) {
-          const key = `${clip.id}-${clip.mediaId}`;
+          const rawPath = asset ? asset.path : (clip as any).audioPath;
+          const sourcePath = rawPath.startsWith("asset://") ? rawPath : convertFileSrc(rawPath);
+          const trimIn = clip.trimIn || 0;
+          const normalizedTrimIn = Math.round(trimIn * 1000) / 1000;
+          const key = `${clip.mediaId}-${sourcePath}-trim${normalizedTrimIn.toFixed(3)}`;
           desiredAudioKeys.add(key);
         }
       }
@@ -449,7 +455,7 @@ export class PreviewMediaPool {
           managed.element.muted = syncState.muted || isTrackMuted || clipVolume === 0;
           managed.element.volume = managed.element.muted ? 0 : Math.max(0, Math.min(1, combinedVolume));
 
-          if (!managed.element.paused) {
+          if (!managed.element.paused && !managed.element.seeking) {
             managed.element.pause();
           }
           if (managed.rvfcHandle !== null && this.hasRVFC) {
@@ -504,14 +510,14 @@ export class PreviewMediaPool {
         // CRITICAL FIX: Elements in grace period must respect playback state
         // If user pauses, grace-period elements must also pause (prevents audio bleed)
         if (isInTransitionGrace && syncState.state !== "playing") {
-          if (!managed.element.paused) {
+          if (!managed.element.paused && !managed.element.seeking) {
             managed.element.pause();
           }
         }
 
         // CRITICAL FIX: Elements in grace period during PLAYING must also be paused if not active
         // This prevents audio bleed when seeking backwards during playback
-        if (isInTransitionGrace && syncState.state === "playing" && !isActive && !managed.element.paused) {
+        if (isInTransitionGrace && syncState.state === "playing" && !isActive && !managed.element.paused && !managed.element.seeking) {
           managed.element.pause();
         }
 
@@ -546,7 +552,7 @@ export class PreviewMediaPool {
       }
 
       // LRU eviction: Remove unused cached elements (not just inactive ones)
-      this.evictUnusedElements();
+      this.evictUnusedElements(clips, assets, syncState);
 
       // Create or update audio elements (unchanged logic)
       for (const clip of clips) {
@@ -558,8 +564,10 @@ export class PreviewMediaPool {
         if (track?.visible === false) continue;
 
         const rawPath = asset ? asset.path : directAudioPath!;
-        const key = `${clip.id}-${clip.mediaId}`;
         const sourcePath = rawPath.startsWith("asset://") ? rawPath : convertFileSrc(rawPath);
+        const trimIn = clip.trimIn || 0;
+        const normalizedTrimIn = Math.round(trimIn * 1000) / 1000;
+        const key = `${clip.mediaId}-${sourcePath}-trim${normalizedTrimIn.toFixed(3)}`;
 
         let managed = this.audios.get(key);
         if (!managed) {
@@ -746,6 +754,14 @@ export class PreviewMediaPool {
     if (this._isDisposed) return;
     this._isDisposed = true;
 
+    // Remove from global pools registry to prevent leaks
+    if (typeof window !== "undefined" && (window as any).__previewMediaPools) {
+      const index = (window as any).__previewMediaPools.indexOf(this);
+      if (index > -1) {
+        (window as any).__previewMediaPools.splice(index, 1);
+      }
+    }
+
     // ─── CLEAR SYNC STATE ────────────────────────────────────────────────────
     // If sync was in progress, this disposal will be caught by the finally block
     // But clear the queued request to prevent post-disposal sync attempts
@@ -907,13 +923,6 @@ export class PreviewMediaPool {
       "loadedmetadata",
       () => {
         managed.ready = true;
-        import("../../store/timelineStore")
-          .then(({ useTimelineStore }) => {
-            useTimelineStore.getState().incrementEpoch();
-          })
-          .catch((err) => {
-            console.error("[PreviewMediaPool] Failed to import useTimelineStore on loadedmetadata", err);
-          });
       },
       { once: true },
     );
@@ -957,7 +966,6 @@ export class PreviewMediaPool {
             });
         }
       },
-      { once: true }, // Auto-remove listener after first seek to prevent leak
     );
 
     video.src = sourcePath;
@@ -1290,12 +1298,38 @@ export class PreviewMediaPool {
    * - Hard limit (800MB): Reduce to 10s, ignore timeline protection
    * Prevents browser crashes on 50+ clip projects during scrubbing.
    */
-  private evictUnusedElements(): void {
+  private evictUnusedElements(clips: Clip[], assets: MediaAsset[], syncState: PreviewSyncState): void {
     const now = performance.now();
     const toEvict: string[] = [];
 
     // Build set of cache keys that are protected (referenced by timeline clips)
     const protectedCacheKeys = new Set(this.timelineClipRegistry.values());
+
+    // Build set of cache keys that are upcoming in the lookahead window (should be protected from early eviction)
+    const upcomingCacheKeys = new Set<string>();
+    if (syncState.state === "playing") {
+      const lookaheadTime = syncState.time + this.LOOKAHEAD_WINDOW_SECONDS;
+      for (const clip of clips) {
+        if (clip.startTime <= syncState.time || clip.startTime > lookaheadTime) {
+          continue;
+        }
+        const asset = assets.find((a) => a.id === clip.mediaId);
+        const track = this.trackMap.get(clip.trackId);
+        if (track?.visible === false || !asset || asset.type !== "video") {
+          continue;
+        }
+        const trimIn = clip.trimIn || 0;
+        const normalizedTrimIn = Math.round(trimIn * 1000) / 1000;
+        const sourcePath = asset.path.startsWith("asset://") ? asset.path : convertFileSrc(asset.path);
+        const cacheKey = `${clip.mediaId}-${sourcePath}-trim${normalizedTrimIn.toFixed(3)}`;
+        upcomingCacheKeys.add(cacheKey);
+      }
+    }
+
+    // Helper to check if element is actively locked for rendering
+    const isLockedForRender = (managed: ManagedVideo) => {
+      return (managed.element as any).__renderLockCount > 0;
+    };
 
     // FINDING-008: Estimate current memory usage and adjust eviction aggressiveness
     const estimatedMemoryMB = this.videoCache.size * this.ESTIMATED_MB_PER_VIDEO;
@@ -1309,8 +1343,11 @@ export class PreviewMediaPool {
         ? 30000 // 30s at soft limit (500MB+) - moderate eviction
         : this.CACHE_EVICTION_AGE_MS; // 60s normal - standard LRU
 
-    // PASS 1: Find candidates - unused for effectiveEvictionAge AND not in timeline
+    // PASS 1: Find candidates - unused for effectiveEvictionAge AND not in timeline AND not locked
     for (const [key, managed] of this.videoCache) {
+      if (isLockedForRender(managed)) {
+        continue;
+      }
       // At hard limit, ignore protection (emergency eviction to prevent crash)
       if (protectedCacheKeys.has(key) && !isOverHardLimit) {
         continue;
@@ -1322,14 +1359,14 @@ export class PreviewMediaPool {
       }
     }
 
-    // PASS 2: If still over limit after age-based eviction, evict oldest unprotected first
-    if (this.videoCache.size > this.MAX_CACHED_VIDEOS) {
-      // Only consider unprotected elements for eviction
+    // PASS 2: If still over limit after age-based eviction, evict oldest unprotected first (not locked)
+    if (this.videoCache.size - toEvict.length > this.MAX_CACHED_VIDEOS) {
+      // Only consider unprotected, unlocked elements for eviction
       const unprotectedElements = Array.from(this.videoCache.entries())
-        .filter(([key]) => !protectedCacheKeys.has(key))
+        .filter(([key, managed]) => !protectedCacheKeys.has(key) && !isLockedForRender(managed))
         .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
 
-      const excess = this.videoCache.size - this.MAX_CACHED_VIDEOS;
+      const excess = this.videoCache.size - toEvict.length - this.MAX_CACHED_VIDEOS;
       for (let i = 0; i < Math.min(excess, unprotectedElements.length); i++) {
         const key = unprotectedElements[i][0];
         if (!toEvict.includes(key)) {
@@ -1338,11 +1375,11 @@ export class PreviewMediaPool {
       }
     }
 
-    // PASS 3 (FINDING-018 FIX): If STILL over limit, evict oldest protected BUT INACTIVE elements
+    // PASS 3 (FINDING-018 FIX): If STILL over limit, evict oldest protected BUT INACTIVE AND NOT UPCOMING elements (not locked)
     // This enforces the hard MAX limit even when all elements are in timeline
     if (this.videoCache.size - toEvict.length > this.MAX_CACHED_VIDEOS) {
       const protectedInactiveElements = Array.from(this.videoCache.entries())
-        .filter(([key, managed]) => protectedCacheKeys.has(key) && !managed.isActive)
+        .filter(([key, managed]) => protectedCacheKeys.has(key) && !managed.isActive && !upcomingCacheKeys.has(key) && !isLockedForRender(managed))
         .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
 
       const remaining = this.videoCache.size - toEvict.length - this.MAX_CACHED_VIDEOS;
@@ -1354,11 +1391,27 @@ export class PreviewMediaPool {
       }
     }
 
-    // PASS 4 (FINDING-018 FIX): Last resort - if STILL over limit, evict oldest protected ACTIVE elements
+    // PASS 3.5: If STILL over limit, evict oldest protected inactive UPCOMING elements (not locked)
+    // We prefer evicting upcoming elements over active elements
+    if (this.videoCache.size - toEvict.length > this.MAX_CACHED_VIDEOS) {
+      const protectedUpcomingElements = Array.from(this.videoCache.entries())
+        .filter(([key, managed]) => protectedCacheKeys.has(key) && !managed.isActive && upcomingCacheKeys.has(key) && !isLockedForRender(managed))
+        .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
+
+      const remaining = this.videoCache.size - toEvict.length - this.MAX_CACHED_VIDEOS;
+      for (let i = 0; i < Math.min(remaining, protectedUpcomingElements.length); i++) {
+        const key = protectedUpcomingElements[i][0];
+        if (!toEvict.includes(key)) {
+          toEvict.push(key);
+        }
+      }
+    }
+
+    // PASS 4 (FINDING-018 FIX): Last resort - if STILL over limit, evict oldest protected ACTIVE elements (not locked)
     // This should rarely happen but prevents unbounded growth
     if (this.videoCache.size - toEvict.length > this.MAX_CACHED_VIDEOS) {
       const protectedActiveElements = Array.from(this.videoCache.entries())
-        .filter(([key, managed]) => protectedCacheKeys.has(key) && managed.isActive)
+        .filter(([key, managed]) => protectedCacheKeys.has(key) && managed.isActive && !isLockedForRender(managed))
         .sort((a, b) => a[1].lastUsedAt - b[1].lastUsedAt);
 
       const remaining = this.videoCache.size - toEvict.length - this.MAX_CACHED_VIDEOS;
@@ -1403,7 +1456,8 @@ export class PreviewMediaPool {
       if (this._isDisposed) return;
 
       // Check if element still exists in cache (by cache key)
-      const cacheKey = `${mediaId}-${sourcePath}`;
+      const normalizedTrimIn = Math.round(trimIn * 1000) / 1000;
+      const cacheKey = `${mediaId}-${sourcePath}-trim${normalizedTrimIn.toFixed(3)}`;
       if (!this.videoCache.has(cacheKey)) return;
 
       // Recalculate expected source time based on latest clock state
