@@ -18,7 +18,7 @@
 import type { EvaluatedEffect, EvaluatedScene, EvaluatedMediaLayer, EvaluatedTextLayer } from "../evaluation/types";
 import { resolveFilterToIR, compileFilterIRToCSS } from "./filterIR";
 import { getResourceCache } from "../resources/ResourceCache";
-import { evaluateScene as engineEvaluateScene, textEffectConfigToScene, type TextEffectConfig, layerToTextEffectConfig, CanvasDevice, defaultConfig as engineDefaultConfig, _buildConfig } from "@clypra/engine";
+import { evaluateScene as engineEvaluateScene, textEffectConfigToScene, type TextEffectConfig, layerToTextEffectConfig, CanvasDevice, defaultConfig as engineDefaultConfig, _buildConfig, EffectGraph, EffectEngine } from "@clypra/engine";
 import { useEffectsStore } from "../../features/text-effects/store/effectsStore";
 import { invalidateEvaluationCache } from "../evaluation/evaluator";
 import { useTimelineStore } from "../../store/timelineStore";
@@ -29,6 +29,8 @@ import { segmentBodyMask } from "../../features/body-effects/segmentation/bodySe
 import { sampleCanvasAlpha, textRenderTrace, textRenderWarn } from "@/lib/debug/textRenderTrace";
 import { performanceMonitor } from "@/lib/monitoring/PerformanceMonitor";
 import { TransitionRenderer } from "@clypra/engine/transitions";
+
+const effectEngine = new EffectEngine();
 
 interface LottieAnimationCacheEntry {
   anim: any;
@@ -747,45 +749,80 @@ function applyRasterEffect(ctx: CanvasRenderingContext2D | OffscreenCanvasRender
   performanceMonitor.increment("rasterizer.effects_applied");
 
   const renderer = normalizeRendererName(effect.renderer || effect.effectId);
-  switch (renderer) {
-    case "glitch":
-      renderGlitch(ctx, effect, width, height);
-      break;
-    case "rgb_split":
-    case "chromatic_aberration":
-    case "chromatic":
-      renderRGBSplit(ctx, effect, width, height);
-      break;
-    case "pixelate":
-      renderPixelate(ctx, effect, width, height);
-      break;
-    case "scanlines":
-      renderScanlines(ctx, effect, width, height);
-      break;
-    case "film_grain":
-    case "grain":
-      renderFilmGrain(ctx, effect, width, height);
-      break;
-    case "vignette":
-      renderVignette(ctx, effect, width, height);
-      break;
-    case "glow":
-      renderFrameGlow(ctx, effect, width, height);
-      break;
-    case "body_segmentation_glow":
-    case "body_glow":
-      renderBodySegmentationGlow(ctx, effect, width, height, bodyMasks.get(effect.effectId));
-      break;
-    case "body_outline":
-      renderBodyOutline(ctx, effect, width, height, bodyMasks.get(effect.effectId));
-      break;
-    case "body_particles":
-      renderBodyParticles(ctx, effect, width, height, bodyMasks.get(effect.effectId));
-      break;
-    default:
-      if (!renderer.includes("blur")) {
-        console.warn(`[Rasterizer] Unknown effect renderer: ${effect.renderer}`);
+
+  if (isBodyRenderer(renderer)) {
+    // Body effects require source mask overlays and are handled locally in the rasterizer
+    switch (renderer) {
+      case "body_segmentation_glow":
+      case "body_glow":
+        renderBodySegmentationGlow(ctx, effect, width, height, bodyMasks.get(effect.effectId));
+        break;
+      case "body_outline":
+        renderBodyOutline(ctx, effect, width, height, bodyMasks.get(effect.effectId));
+        break;
+      case "body_particles":
+        renderBodyParticles(ctx, effect, width, height, bodyMasks.get(effect.effectId));
+        break;
+    }
+  } else {
+    // Traditional effects are executed through the unified Effect Engine and Graph
+    try {
+      const graphDef = {
+        schemaVersion: "2.0.0",
+        graphId: effect.effectId,
+        name: effect.renderer || effect.effectId,
+        nodes: [
+          { id: "input-node", type: "source", params: {} },
+          { id: "effect-node", type: renderer === "grain" ? "film_grain" : renderer, params: effect.parameters }
+        ],
+        connections: [
+          { fromNode: "input-node", fromOutput: "output", toNode: "effect-node", toInput: "input" }
+        ]
+      };
+
+      const graph = new EffectGraph(graphDef);
+      effectEngine.loadGraph(graph);
+
+      // Copy the source frame to input
+      const sourceCopy = CanvasDevice.acquire(width, height);
+      const sourceCopyCtx = sourceCopy.getContext("2d")!;
+      sourceCopyCtx.clearRect(0, 0, width, height);
+      sourceCopyCtx.drawImage(ctx.canvas as any, 0, 0, width, height);
+
+      // Render through unified engine
+      effectEngine.render(ctx as any, effect.localTime || 0, sourceCopy);
+
+      CanvasDevice.release(sourceCopy);
+    } catch (err) {
+      console.warn("[Rasterizer:EffectGraph] Failed to execute through EffectEngine, falling back to legacy", err);
+      // Fallback
+      switch (renderer) {
+        case "glitch":
+          renderGlitch(ctx, effect, width, height);
+          break;
+        case "rgb_split":
+        case "chromatic_aberration":
+        case "chromatic":
+          renderRGBSplit(ctx, effect, width, height);
+          break;
+        case "pixelate":
+          renderPixelate(ctx, effect, width, height);
+          break;
+        case "scanlines":
+          renderScanlines(ctx, effect, width, height);
+          break;
+        case "film_grain":
+        case "grain":
+          renderFilmGrain(ctx, effect, width, height);
+          break;
+        case "vignette":
+          renderVignette(ctx, effect, width, height);
+          break;
+        case "glow":
+          renderFrameGlow(ctx, effect, width, height);
+          break;
       }
+    }
   }
 
   performanceMonitor.endTimer(`rasterizer.effect_${effect.renderer || effect.effectId}`);
